@@ -42,17 +42,11 @@ router.post("/upload", upload.single("resume"), async (req, res) => {
     if (!textContent.trim()) return res.status(400).json({ error: "Could not extract text" });
 
     const stmt = db.prepare(`
-      INSERT INTO resumes (filename, originalName, textContent, createdAt)
+      INSERT INTO resumes (filename, original_name, text_content, created_at)
       VALUES (?, ?, ?, ?)
     `);
 
-    const info = stmt.run(
-      file.filename,
-      file.originalname,
-      textContent,
-      new Date().toISOString()
-    );
-
+    const info = stmt.run(file.filename, file.originalname, textContent, new Date().toISOString());
     res.json({ id: info.lastInsertRowid, originalName: file.originalname });
   } catch (e) {
     res.status(500).json({ error: e.message });
@@ -60,7 +54,7 @@ router.post("/upload", upload.single("resume"), async (req, res) => {
 });
 
 router.get("/", (req, res) => {
-  const rows = db.prepare("SELECT id, originalName, createdAt FROM resumes ORDER BY id DESC").all();
+  const rows = db.prepare("SELECT id, original_name, created_at FROM resumes ORDER BY id DESC").all();
   res.json(rows);
 });
 
