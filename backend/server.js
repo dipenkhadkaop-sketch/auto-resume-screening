@@ -1,3 +1,4 @@
+const analysisRoutes = require("./routes/analysis.routes");
 require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
