@@ -1,14 +1,13 @@
 const router = require("express").Router();
 const db = require("../db/database");
+const authMiddleware = require("../middleware/auth"); // optional but recommended
 
-// Simple scoring (works, no extra service needed)
+// Simple scoring
 function scoreSimple(jobText, resumeText) {
   const job = (jobText || "").toLowerCase();
   const res = (resumeText || "").toLowerCase();
 
-  const terms = Array.from(
-    new Set(job.split(/[^a-z0-9]+/).filter(w => w.length > 2))
-  );
+  const terms = Array.from(new Set(job.split(/[^a-z0-9]+/).filter((w) => w.length > 2)));
 
   let hit = 0;
   const topTerms = [];
@@ -24,67 +23,99 @@ function scoreSimple(jobText, resumeText) {
   return { score: hit, scorePercent, topTerms };
 }
 
-router.post("/rank", (req, res) => {
+function dbGet(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.get(sql, params, (err, row) => (err ? reject(err) : resolve(row)));
+  });
+}
+function dbAll(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows)));
+  });
+}
+function dbRun(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.run(sql, params, function (err) {
+      if (err) reject(err);
+      else resolve(this);
+    });
+  });
+}
+
+// POST /analysis/rank
+router.post("/rank", authMiddleware, async (req, res) => {
   try {
     const { jobId } = req.body;
-    if (!jobId) return res.status(400).json({ error: "jobId required" });
+    if (!jobId) return res.status(400).json({ message: "jobId required" });
 
-    const job = db.prepare("SELECT * FROM jobs WHERE id = ?").get(Number(jobId));
-    if (!job) return res.status(404).json({ error: "Job not found" });
+    const job = await dbGet("SELECT * FROM jobs WHERE id = ?", [Number(jobId)]);
+    if (!job) return res.status(404).json({ message: "Job not found" });
 
-    const resumes = db.prepare("SELECT * FROM resumes").all();
-    if (!resumes.length) return res.status(400).json({ error: "No resumes uploaded" });
+    // Only rank resumes owned by logged-in user
+    const userId = req.user.id;
+    const resumes = await dbAll("SELECT * FROM resumes WHERE user_id = ?", [userId]);
+    if (!resumes.length) return res.status(400).json({ message: "No resumes uploaded" });
 
-    db.prepare("DELETE FROM rankings WHERE job_id = ?").run(Number(jobId));
+    await dbRun("DELETE FROM rankings WHERE job_id = ?", [Number(jobId)]);
 
-    const insert = db.prepare(`
-      INSERT INTO rankings (job_id, resume_id, score, score_percent, top_terms, created_at)
-      VALUES (?, ?, ?, ?, ?, ?)
-    `);
-
-    const results = resumes.map(r => {
+    // Insert rankings
+    for (const r of resumes) {
       const s = scoreSimple(job.description, r.text_content);
-      insert.run(
-        Number(jobId),
-        r.id,
-        s.score,
-        s.scorePercent,
-        JSON.stringify(s.topTerms),
-        new Date().toISOString()
-      );
 
-      return {
-        resumeId: r.id,
-        resumeName: r.original_name,
-        scorePercent: s.scorePercent,
-        topTerms: s.topTerms
-      };
-    }).sort((a, b) => b.scorePercent - a.scorePercent);
+      await dbRun(
+        `INSERT INTO rankings (job_id, resume_id, score, score_percent, top_terms)
+         VALUES (?, ?, ?, ?, ?)`,
+        [Number(jobId), r.id, s.score, s.scorePercent, JSON.stringify(s.topTerms)]
+      );
+    }
+
+    // Return results sorted
+    const results = resumes
+      .map((r) => {
+        const s = scoreSimple(job.description, r.text_content);
+        return {
+          resumeId: r.id,
+          resumeName: r.original_name,
+          scorePercent: s.scorePercent,
+          topTerms: s.topTerms,
+        };
+      })
+      .sort((a, b) => b.scorePercent - a.scorePercent);
 
     res.json({ jobId: Number(jobId), results });
   } catch (e) {
-    res.status(500).json({ error: e.message });
+    res.status(500).json({ message: "Rank failed", error: e.message });
   }
 });
 
-router.get("/rankings/:jobId", (req, res) => {
-  const jobId = Number(req.params.jobId);
-  const rows = db.prepare(`
-    SELECT rankings.*, resumes.original_name AS resumeName
-    FROM rankings
-    JOIN resumes ON resumes.id = rankings.resume_id
-    WHERE rankings.job_id = ?
-    ORDER BY rankings.score_percent DESC
-  `).all(jobId);
+// GET /analysis/rankings/:jobId
+router.get("/rankings/:jobId", authMiddleware, async (req, res) => {
+  try {
+    const jobId = Number(req.params.jobId);
+    const userId = req.user.id;
 
-  const formatted = rows.map(r => ({
-    resumeId: r.resume_id,
-    resumeName: r.resumeName,
-    scorePercent: r.score_percent,
-    topTerms: JSON.parse(r.top_terms)
-  }));
+    const rows = await dbAll(
+      `
+      SELECT rankings.*, resumes.original_name AS resumeName
+      FROM rankings
+      JOIN resumes ON resumes.id = rankings.resume_id
+      WHERE rankings.job_id = ? AND resumes.user_id = ?
+      ORDER BY rankings.score_percent DESC
+      `,
+      [jobId, userId]
+    );
 
-  res.json(formatted);
+    const formatted = rows.map((r) => ({
+      resumeId: r.resume_id,
+      resumeName: r.resumeName,
+      scorePercent: r.score_percent,
+      topTerms: r.top_terms ? JSON.parse(r.top_terms) : [],
+    }));
+
+    res.json(formatted);
+  } catch (e) {
+    res.status(500).json({ message: "Fetch rankings failed", error: e.message });
+  }
 });
 
 module.exports = router;

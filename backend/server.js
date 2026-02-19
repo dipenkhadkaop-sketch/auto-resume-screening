@@ -1,17 +1,24 @@
-require("dotenv").config();
 const express = require("express");
 const cors = require("cors");
+require("dotenv").config();
 
 const app = express();
+
 app.use(cors());
-app.use(express.json({ limit: "5mb" }));
+app.use(express.json());
 
-app.get("/", (req, res) => res.json({ status: "API OK" }));
+require("./db/database");
 
-app.use("/auth", require("./routes/auth.routes"));
-app.use("/jobs", require("./routes/job.routes"));
+// PUBLIC routes (NO TOKEN)
+app.use("/auth", require("./routes/auth"));
+
+// PROTECTED routes (inside route files)
 app.use("/resume", require("./routes/resume.routes"));
+app.use("/jobs", require("./routes/job.routes"));
 app.use("/analysis", require("./routes/analysis.routes"));
+app.use("/auth", require("./routes/auth"));
 
 const PORT = process.env.PORT || 4000;
-app.listen(PORT, () => console.log(`Backend running on http://localhost:${PORT}`));
+app.listen(PORT, () =>
+  console.log("✅ Server running on port", PORT)
+);

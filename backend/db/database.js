@@ -1,48 +1,66 @@
-const Database = require("better-sqlite3");
 const path = require("path");
+const sqlite3 = require("sqlite3").verbose();
 
-const dbPath = path.join(__dirname, "data.sqlite");
-const db = new Database(dbPath);
+// DB file path (stored inside /db folder)
+const DB_PATH = path.join(__dirname, "database.db");
 
-db.pragma("journal_mode = WAL");
+const db = new sqlite3.Database(DB_PATH, (err) => {
+  if (err) console.error("❌ DB connection error:", err.message);
+  else console.log("✅ Connected to SQLite:", DB_PATH);
+});
 
-// Create tables
-db.exec(`
-  CREATE TABLE IF NOT EXISTS users (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    username TEXT NOT NULL,
-    email TEXT NOT NULL UNIQUE,
-    password_hash TEXT NOT NULL,
-    role TEXT NOT NULL DEFAULT 'user',
-    created_at TEXT NOT NULL
-  );
+// Run schema safely
+db.serialize(() => {
+  // Users table (auth)
+  db.run(`
+    CREATE TABLE IF NOT EXISTS users (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      full_name TEXT,
+      email TEXT UNIQUE NOT NULL,
+      password_hash TEXT NOT NULL,
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
 
-  CREATE TABLE IF NOT EXISTS jobs (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    title TEXT NOT NULL,
-    description TEXT NOT NULL,
-    created_at TEXT NOT NULL
-  );
+  // Jobs table
+  db.run(`
+    CREATE TABLE IF NOT EXISTS jobs (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      title TEXT NOT NULL,
+      description TEXT,
+      required_skills TEXT,
+      created_at TEXT DEFAULT (datetime('now'))
+    )
+  `);
 
-  CREATE TABLE IF NOT EXISTS resumes (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    filename TEXT NOT NULL,
-    original_name TEXT NOT NULL,
-    text_content TEXT NOT NULL,
-    created_at TEXT NOT NULL
-  );
+  // Resumes table
+  db.run(`
+    CREATE TABLE IF NOT EXISTS resumes (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      user_id INTEGER NOT NULL,
+      original_name TEXT,
+      file_type TEXT,
+      stored_name TEXT,
+      text_content TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (user_id) REFERENCES users(id)
+    )
+  `);
 
-  CREATE TABLE IF NOT EXISTS rankings (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    job_id INTEGER NOT NULL,
-    resume_id INTEGER NOT NULL,
-    score REAL NOT NULL,
-    score_percent REAL NOT NULL,
-    top_terms TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY(job_id) REFERENCES jobs(id),
-    FOREIGN KEY(resume_id) REFERENCES resumes(id)
-  );
-`);
+  // ✅ Rankings table
+  db.run(`
+    CREATE TABLE IF NOT EXISTS rankings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      job_id INTEGER NOT NULL,
+      resume_id INTEGER NOT NULL,
+      score INTEGER NOT NULL,
+      score_percent INTEGER NOT NULL,
+      top_terms TEXT,
+      created_at TEXT DEFAULT (datetime('now')),
+      FOREIGN KEY (job_id) REFERENCES jobs(id),
+      FOREIGN KEY (resume_id) REFERENCES resumes(id)
+    )
+  `);
+});
 
 module.exports = db;
