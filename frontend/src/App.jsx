@@ -1,391 +1,426 @@
-import React, { useEffect, useState } from "react";
-
-const API = import.meta.env.VITE_API_URL || "http://localhost:4000";
-
-// ===== LocalStorage helpers =====
-function getToken() {
-  return localStorage.getItem("token");
-}
-function setToken(t) {
-  localStorage.setItem("token", t);
-}
-function clearToken() {
-  localStorage.removeItem("token");
-}
-
-function getSavedUser() {
-  try {
-    const raw = localStorage.getItem("user");
-    return raw ? JSON.parse(raw) : null;
-  } catch {
-    return null;
-  }
-}
-function setSavedUser(u) {
-  localStorage.setItem("user", JSON.stringify(u));
-}
-function clearSavedUser() {
-  localStorage.removeItem("user");
-}
-
-// ===== request helper =====
-async function request(path, options = {}) {
-  const token = getToken();
-  const headers = { ...(options.headers || {}) };
-
-  // JSON body => set content-type
-  if (options.body && !(options.body instanceof FormData)) {
-    headers["Content-Type"] = "application/json";
-  }
-
-  // ✅ IMPORTANT: don't attach token to /auth routes
-  if (token && !path.startsWith("/auth")) {
-    headers["Authorization"] = `Bearer ${token}`;
-  }
-
-  const res = await fetch(`${API}${path}`, { ...options, headers });
-
-  const text = await res.text();
-  let data = {};
-  try {
-    data = text ? JSON.parse(text) : {};
-  } catch {
-    data = { raw: text };
-  }
-
-  if (!res.ok) {
-    const msg = data?.message || data?.error || `Request failed (${res.status})`;
-    throw new Error(msg);
-  }
-
-  return data;
-}
+import React, { useEffect, useMemo, useState } from "react";
+import Login from "./components/Login";
+import { request, getToken, clearToken } from "./api";
 
 export default function App() {
-  const [page, setPage] = useState(getToken() ? "upload" : "login");
-  const [user, setUser] = useState(getSavedUser());
+  const [user, setUser] = useState(null);
+  const [health, setHealth] = useState(null);
+  const [error, setError] = useState("");
 
-  // auth form
-  const [fullName, setFullName] = useState("Dipen");
-  const [email, setEmail] = useState("dipen@test.com");
-  const [password, setPassword] = useState("123456");
-  const [msg, setMsg] = useState("");
-  const [err, setErr] = useState("");
+  // UI
+  const [tab, setTab] = useState("upload"); // upload | job | analyze | results
+  const [toast, setToast] = useState("");
+  const [busy, setBusy] = useState(false);
 
-  // upload
-  const [file, setFile] = useState(null);
+  // Resume
+  const [resumeFile, setResumeFile] = useState(null);
+  const [resumeUserId, setResumeUserId] = useState(1);
+  const [uploadedResume, setUploadedResume] = useState(null);
 
-  // jobs + ranking
-  const [jobs, setJobs] = useState([]);
+  // Job
   const [jobTitle, setJobTitle] = useState("Junior Developer");
-  const [jobDesc, setJobDesc] = useState("JavaScript, Node.js, SQL, Git, REST APIs");
-  const [jobId, setJobId] = useState("");
-  const [results, setResults] = useState([]);
+  const [jobDescription, setJobDescription] = useState(
+    "React, Node.js, Express, SQLite, Git, API integration"
+  );
+  const [createdJob, setCreatedJob] = useState(null);
 
-  // Load jobs when entering rank page
+  // Analysis
+  const [analysisResult, setAnalysisResult] = useState(null);
+
+  const tokenExists = useMemo(() => Boolean(getToken()), [user]);
+  const canCreateJob = useMemo(
+    () => Boolean(user && (user.role === "admin" || user.role === "hr")),
+    [user]
+  );
+
+  // Health check
   useEffect(() => {
-    if (page !== "rank") return;
-
     (async () => {
       try {
-        setErr("");
-        const list = await request("/jobs", { method: "GET" });
-        const safe = Array.isArray(list) ? list : [];
-        setJobs(safe);
-        if (safe.length && !jobId) setJobId(String(safe[0].id));
+        const h = await request("/health");
+        setHealth(h);
       } catch (e) {
-        setErr(e.message);
+        setError(e.message);
       }
     })();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [page]);
+  }, []);
 
-  async function doRegister(e) {
-    e.preventDefault();
-    setMsg("");
-    setErr("");
-
-    try {
-      const data = await request("/auth/register", {
-        method: "POST",
-        body: JSON.stringify({ full_name: fullName, email, password }),
-      });
-
-      setMsg(`${data.message} ✅ Now login.`);
-      setPage("login");
-    } catch (ex) {
-      setErr(ex.message);
-    }
-  }
-
-  async function doLogin(e) {
-    e.preventDefault();
-    setMsg("");
-    setErr("");
-
-    try {
-      const data = await request("/auth/login", {
-        method: "POST",
-        body: JSON.stringify({ email, password }),
-      });
-
-      setToken(data.token);
-      setUser(data.user);
-      setSavedUser(data.user);
-
-      setMsg("Logged in ✅");
-      setPage("upload");
-    } catch (ex) {
-      setErr(ex.message);
-    }
-  }
-
-  async function doUpload(e) {
-    e.preventDefault();
-    setMsg("");
-    setErr("");
-
-    if (!file) return setErr("Choose a PDF/DOCX first");
-
-    try {
-      const form = new FormData();
-      form.append("resume", file);
-
-      const data = await request("/resume/upload", {
-        method: "POST",
-        body: form,
-      });
-
-      const rid = data.id ?? data.resume_id ?? "OK";
-      setMsg(`Resume uploaded ✅ (id: ${rid})`);
-    } catch (ex) {
-      setErr(ex.message);
-    }
-  }
-
-  async function createJob(e) {
-    e.preventDefault();
-    setMsg("");
-    setErr("");
-
-    try {
-      await request("/jobs", {
-        method: "POST",
-        body: JSON.stringify({ title: jobTitle, description: jobDesc }),
-      });
-
-      setMsg("Job created ✅");
-
-      const list = await request("/jobs", { method: "GET" });
-      const safe = Array.isArray(list) ? list : [];
-      setJobs(safe);
-      if (safe.length) setJobId(String(safe[0].id));
-    } catch (ex) {
-      setErr(ex.message);
-    }
-  }
-
-  async function rankResumes(e) {
-    e.preventDefault();
-    setMsg("");
-    setErr("");
-    setResults([]);
-
-    try {
-      const data = await request("/analysis/rank", {
-        method: "POST",
-        body: JSON.stringify({ jobId: Number(jobId) }),
-      });
-
-      setResults(data.results || []);
-      setMsg("Ranking complete ✅");
-    } catch (ex) {
-      setErr(ex.message);
-    }
-  }
+  // Toast auto-hide
+  useEffect(() => {
+    if (!toast) return;
+    const t = setTimeout(() => setToast(""), 2500);
+    return () => clearTimeout(t);
+  }, [toast]);
 
   function logout() {
     clearToken();
-    clearSavedUser();
     setUser(null);
-    setPage("login");
-    setMsg("Logged out ✅");
-    setErr("");
+    setTab("upload");
+    setUploadedResume(null);
+    setCreatedJob(null);
+    setAnalysisResult(null);
+    setError("");
+    setToast("Logged out");
   }
 
-  function hardReset() {
-    localStorage.clear();
-    setUser(null);
-    setMsg("LocalStorage cleared ✅");
-    setErr("");
-    setPage("login");
+  async function handleUploadResume() {
+    if (!resumeFile) return setToast("Please choose a resume file first");
+    setBusy(true);
+    setError("");
+
+    try {
+      const fd = new FormData();
+      fd.append("resume", resumeFile);
+      fd.append("user_id", String(resumeUserId));
+
+      const data = await request("/resume/upload", {
+        method: "POST",
+        body: fd,
+      });
+
+      setUploadedResume(data);
+      setToast("Resume uploaded ✅");
+      setTab(canCreateJob ? "job" : "analyze"); // recruiter can skip job creation
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
   }
+
+  async function handleCreateJob() {
+    if (!canCreateJob) {
+      setError("Only admin or hr can create jobs.");
+      return;
+    }
+
+    if (!jobTitle.trim() || !jobDescription.trim()) {
+      return setToast("Please enter job title + description");
+    }
+
+    setBusy(true);
+    setError("");
+
+    try {
+      // ✅ Your backend route is POST /jobs (see job.routes.js)
+      const data = await request("/jobs", {
+        method: "POST",
+        body: JSON.stringify({
+          title: jobTitle,
+          description: jobDescription,
+        }),
+      });
+
+      // backend returns { id: lastID }
+      setCreatedJob(data);
+      setToast("Job created ✅");
+      setTab("analyze");
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  async function handleAnalyze() {
+    const resume_id =
+      uploadedResume?.resume_id ?? uploadedResume?.id ?? uploadedResume?.resumeId ?? null;
+
+    const job_id = createdJob?.id ?? createdJob?.job_id ?? createdJob?.jobId ?? null;
+
+    if (!resume_id) return setToast("Upload a resume first");
+
+    // If recruiter didn’t create a job, they must select an existing job ID
+    if (!job_id) {
+      return setError(
+        "No Job ID found. Admin/HR must create a job first, or you need to select an existing job."
+      );
+    }
+
+    setBusy(true);
+    setError("");
+
+    try {
+      // try analysis route first, fallback to resume score
+      let data;
+      try {
+        data = await request(`/analysis/score/${resume_id}/${job_id}`);
+      } catch {
+        data = await request(`/resume/score/${resume_id}/${job_id}`);
+      }
+
+      setAnalysisResult(data);
+      setToast("Analysis complete ✅");
+      setTab("results");
+    } catch (e) {
+      setError(e.message);
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  // UI helpers
+  const Card = ({ title, children }) => (
+    <div
+      style={{
+        border: "1px solid #ddd",
+        borderRadius: 12,
+        padding: 16,
+        marginTop: 12,
+        background: "#fff",
+      }}
+    >
+      <h3 style={{ margin: 0, marginBottom: 10 }}>{title}</h3>
+      {children}
+    </div>
+  );
+
+  const TabButton = ({ id, label, disabled }) => (
+    <button
+      onClick={() => setTab(id)}
+      disabled={disabled}
+      style={{
+        padding: "8px 12px",
+        borderRadius: 10,
+        border: tab === id ? "2px solid #111" : "1px solid #ddd",
+        background: tab === id ? "#f3f3f3" : "#fff",
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.6 : 1,
+      }}
+    >
+      {label}
+    </button>
+  );
 
   return (
-    <div style={{ fontFamily: "sans-serif", maxWidth: 980, margin: "0 auto" }}>
-      <header
-        style={{
-          display: "flex",
-          gap: 10,
-          padding: 12,
-          borderBottom: "1px solid #eee",
-          flexWrap: "wrap",
-        }}
-      >
-        <button onClick={() => setPage("register")}>Register</button>
-        <button onClick={() => setPage("login")}>Login</button>
-        <button onClick={() => setPage("upload")}>Upload Resume</button>
-        <button onClick={() => setPage("rank")}>Jobs & Rank</button>
+    <div style={{ fontFamily: "sans-serif", padding: 16, maxWidth: 900, margin: "0 auto" }}>
+      <h1 style={{ marginBottom: 6 }}>Auto Resume Screening</h1>
 
-        <button onClick={hardReset} style={{ marginLeft: "auto" }}>
-          Clear Storage
-        </button>
-        <button onClick={logout}>Logout</button>
-      </header>
-
-      <div style={{ padding: 16 }}>
-        <div style={{ opacity: 0.8, marginBottom: 10 }}>
-          API: {API} | {user ? `Logged in: ${user.email}` : "Not logged in"}
-        </div>
-
-        {msg && <p style={{ color: "green" }}>{msg}</p>}
-        {err && <p style={{ color: "crimson" }}>Error: {err}</p>}
-
-        {page === "register" && (
-          <form onSubmit={doRegister} style={{ maxWidth: 420 }}>
-            <h2>Register</h2>
-
-            <label>Full name</label>
-            <input
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              style={{ width: "100%", padding: 8, margin: "6px 0 12px" }}
-            />
-
-            <label>Email</label>
-            <input
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              style={{ width: "100%", padding: 8, margin: "6px 0 12px" }}
-            />
-
-            <label>Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              style={{ width: "100%", padding: 8, margin: "6px 0 12px" }}
-            />
-
-            <button style={{ padding: "10px 14px" }}>Create account</button>
-          </form>
-        )}
-
-        {page === "login" && (
-          <form onSubmit={doLogin} style={{ maxWidth: 420 }}>
-            <h2>Login</h2>
-
-            <label>Email</label>
-            <input
-              value={email}
-              onChange={(e) => setEmail(e.target.value)}
-              style={{ width: "100%", padding: 8, margin: "6px 0 12px" }}
-            />
-
-            <label>Password</label>
-            <input
-              type="password"
-              value={password}
-              onChange={(e) => setPassword(e.target.value)}
-              style={{ width: "100%", padding: 8, margin: "6px 0 12px" }}
-            />
-
-            <button style={{ padding: "10px 14px" }}>Login</button>
-          </form>
-        )}
-
-        {page === "upload" && (
-          <form onSubmit={doUpload} style={{ maxWidth: 520 }}>
-            <h2>Upload Resume</h2>
-
-            <input
-              type="file"
-              accept=".pdf,.docx"
-              onChange={(e) => setFile(e.target.files?.[0] || null)}
-            />
-
-            <div style={{ marginTop: 12 }}>
-              <button style={{ padding: "10px 14px" }}>Upload</button>
-            </div>
-          </form>
-        )}
-
-        {page === "rank" && (
-          <div>
-            <h2>Jobs & Ranking</h2>
-
-            <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 20 }}>
-              <form onSubmit={createJob}>
-                <h3>Create Job</h3>
-
-                <label>Title</label>
-                <input
-                  value={jobTitle}
-                  onChange={(e) => setJobTitle(e.target.value)}
-                  style={{ width: "100%", padding: 8, margin: "6px 0 12px" }}
-                />
-
-                <label>Description</label>
-                <textarea
-                  value={jobDesc}
-                  onChange={(e) => setJobDesc(e.target.value)}
-                  rows={6}
-                  style={{ width: "100%", padding: 8, margin: "6px 0 12px" }}
-                />
-
-                <button style={{ padding: "10px 14px" }}>Create</button>
-              </form>
-
-              <form onSubmit={rankResumes}>
-                <h3>Rank Resumes</h3>
-
-                <label>Select Job</label>
-                <select
-                  value={jobId}
-                  onChange={(e) => setJobId(e.target.value)}
-                  style={{ width: "100%", padding: 8, margin: "6px 0 12px" }}
-                >
-                  {jobs.map((j) => (
-                    <option key={j.id} value={j.id}>
-                      {j.id} — {j.title}
-                    </option>
-                  ))}
-                </select>
-
-                <button style={{ padding: "10px 14px" }}>Rank</button>
-              </form>
-            </div>
-
-            <h3 style={{ marginTop: 20 }}>Results</h3>
-            <div style={{ border: "1px solid #ddd", borderRadius: 8, padding: 12 }}>
-              {results.length === 0 ? (
-                <p>No results yet.</p>
-              ) : (
-                <ol>
-                  {results.map((r, idx) => (
-                    <li key={r.resumeId ?? idx} style={{ marginBottom: 10 }}>
-                      <b>{r.resumeName ?? "Resume"}</b> — {r.scorePercent ?? r.score ?? 0}%
-                      <div style={{ fontSize: 12, opacity: 0.8 }}>
-                        Top terms: {(r.topTerms || []).map((t) => `${t.term}(${t.weight})`).join(", ")}
-                      </div>
-                    </li>
-                  ))}
-                </ol>
-              )}
-            </div>
-          </div>
-        )}
+      <div style={{ marginBottom: 12 }}>
+        <strong>Backend health:</strong>{" "}
+        {health?.ok ? "✅ OK" : error ? `❌ ${error}` : "Loading..."}
       </div>
+
+      {toast && (
+        <div
+          style={{
+            padding: 10,
+            borderRadius: 10,
+            background: "#111",
+            color: "#fff",
+            display: "inline-block",
+            marginBottom: 12,
+          }}
+        >
+          {toast}
+        </div>
+      )}
+
+      {!user ? (
+        <Login
+          onLogin={(u) => {
+            setUser(u);
+            setToast(`Logged in as ${u.role} ✅`);
+            setTab("upload");
+          }}
+        />
+      ) : (
+        <>
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              alignItems: "center",
+              gap: 12,
+              flexWrap: "wrap",
+            }}
+          >
+            <div>
+              Logged in as <b>{user.full_name}</b> ({user.email}) — role: <b>{user.role}</b>
+              <div style={{ fontSize: 12, marginTop: 4 }}>
+                Token: {tokenExists ? "✅ stored" : "❌ missing"}
+              </div>
+              <div style={{ fontSize: 12, marginTop: 4 }}>
+                Job permission: {canCreateJob ? "✅ Can create jobs (Admin/HR)" : "❌ Recruiter/User"}
+              </div>
+            </div>
+
+            <button onClick={logout} style={{ padding: "8px 12px", borderRadius: 10 }}>
+              Logout
+            </button>
+          </div>
+
+          {error && (
+            <div style={{ marginTop: 12, color: "crimson" }}>
+              <b>Error:</b> {error}
+            </div>
+          )}
+
+          <div style={{ display: "flex", gap: 10, marginTop: 14, flexWrap: "wrap" }}>
+            <TabButton id="upload" label="1) Upload Resume" disabled={!user} />
+            <TabButton
+              id="job"
+              label="2) Create Job (Admin/HR)"
+              disabled={!user || !canCreateJob}
+            />
+            <TabButton id="analyze" label="3) Analyze" disabled={!user} />
+            <TabButton id="results" label="4) Results" disabled={!user} />
+          </div>
+
+          {/* Upload */}
+          {tab === "upload" && (
+            <Card title="Upload Resume">
+              <div style={{ display: "grid", gap: 10 }}>
+                <label>
+                  User ID (demo):
+                  <input
+                    type="number"
+                    value={resumeUserId}
+                    onChange={(e) => setResumeUserId(Number(e.target.value))}
+                    style={{ width: "100%", padding: 8, marginTop: 6 }}
+                  />
+                </label>
+
+                <label>
+                  Choose PDF/DOCX resume:
+                  <input
+                    type="file"
+                    accept=".pdf,.docx"
+                    onChange={(e) => setResumeFile(e.target.files?.[0] || null)}
+                    style={{ width: "100%", padding: 8, marginTop: 6 }}
+                  />
+                </label>
+
+                <button
+                  onClick={handleUploadResume}
+                  disabled={busy}
+                  style={{ padding: "10px 12px", borderRadius: 10 }}
+                >
+                  {busy ? "Uploading..." : "Upload Resume"}
+                </button>
+
+                {uploadedResume && (
+                  <div style={{ marginTop: 8, fontSize: 14 }}>
+                    <b>Resume ID:</b>{" "}
+                    {uploadedResume.resume_id ?? uploadedResume.id ?? uploadedResume.resumeId}
+                    <br />
+                    <b>File:</b> {uploadedResume.original_name || uploadedResume.originalName || "—"}
+                  </div>
+                )}
+              </div>
+            </Card>
+          )}
+
+          {/* Job */}
+          {tab === "job" && (
+            <Card title="Create Job (Admin/HR only)">
+              {!canCreateJob ? (
+                <div style={{ color: "#444" }}>
+                  You are logged in as <b>{user.role}</b>. Only <b>admin</b> or <b>hr</b> can create
+                  jobs.
+                </div>
+              ) : (
+                <div style={{ display: "grid", gap: 10 }}>
+                  <label>
+                    Job Title
+                    <input
+                      value={jobTitle}
+                      onChange={(e) => setJobTitle(e.target.value)}
+                      style={{ width: "100%", padding: 8, marginTop: 6 }}
+                    />
+                  </label>
+
+                  <label>
+                    Job Description / Required Skills
+                    <textarea
+                      value={jobDescription}
+                      onChange={(e) => setJobDescription(e.target.value)}
+                      rows={6}
+                      style={{ width: "100%", padding: 8, marginTop: 6 }}
+                    />
+                  </label>
+
+                  <button
+                    onClick={handleCreateJob}
+                    disabled={busy}
+                    style={{ padding: "10px 12px", borderRadius: 10 }}
+                  >
+                    {busy ? "Creating..." : "Create Job"}
+                  </button>
+
+                  {createdJob && (
+                    <div style={{ marginTop: 8, fontSize: 14 }}>
+                      <b>Created Job ID:</b> {createdJob.id}
+                    </div>
+                  )}
+                </div>
+              )}
+            </Card>
+          )}
+
+          {/* Analyze */}
+          {tab === "analyze" && (
+            <Card title="Analyze Resume vs Job">
+              <div style={{ fontSize: 14, marginBottom: 10 }}>
+                <div>
+                  <b>Resume ID:</b>{" "}
+                  {uploadedResume?.resume_id ?? uploadedResume?.id ?? uploadedResume?.resumeId ?? "—"}
+                </div>
+                <div>
+                  <b>Job ID:</b> {createdJob?.id ?? "—"}
+                </div>
+              </div>
+
+              <button
+                onClick={handleAnalyze}
+                disabled={busy}
+                style={{ padding: "10px 12px", borderRadius: 10 }}
+              >
+                {busy ? "Analyzing..." : "Run Analysis"}
+              </button>
+
+              <div style={{ fontSize: 13, color: "#444", marginTop: 10 }}>
+                Uses <code>/analysis/score</code> (fallback: <code>/resume/score</code>)
+              </div>
+            </Card>
+          )}
+
+          {/* Results */}
+          {tab === "results" && (
+            <Card title="Results">
+              {!analysisResult ? (
+                <div>Run analysis first.</div>
+              ) : (
+                <div style={{ display: "grid", gap: 10 }}>
+                  <div style={{ fontSize: 18 }}>
+                    Score:{" "}
+                    <b>
+                      {analysisResult.score_percentage ??
+                        analysisResult.score ??
+                        analysisResult.scorePercentage ??
+                        "—"}
+                      %
+                    </b>
+                  </div>
+
+                  {analysisResult.matched_skills && (
+                    <div>
+                      <b>Matched skills:</b> {analysisResult.matched_skills.join(", ")}
+                    </div>
+                  )}
+
+                  <details>
+                    <summary>Raw JSON</summary>
+                    <pre style={{ whiteSpace: "pre-wrap" }}>
+                      {JSON.stringify(analysisResult, null, 2)}
+                    </pre>
+                  </details>
+                </div>
+              )}
+            </Card>
+          )}
+        </>
+      )}
     </div>
   );
 }
