@@ -12,7 +12,7 @@ const requireRole = require("../middleware/requireRole");
 const { audit } = require("../utils/audit");
 
 const uploadDir = path.join(__dirname, "..", "uploads");
-if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir);
+if (!fs.existsSync(uploadDir)) fs.mkdirSync(uploadDir, { recursive: true });
 
 const storage = multer.diskStorage({
   destination: uploadDir,
@@ -35,11 +35,6 @@ function dbRun(sql, params = []) {
       if (err) reject(err);
       else resolve(this);
     });
-  });
-}
-function dbGet(sql, params = []) {
-  return new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => (err ? reject(err) : resolve(row)));
   });
 }
 
@@ -71,17 +66,27 @@ router.post("/upload", auth, requireRole("candidate"), (req, res) => {
         return res.status(400).json({ message: err.message });
       }
 
-      const file = req.file;
-      if (!file) return res.status(400).json({ message: "resume file required" });
+      if (!req.file) return res.status(400).json({ message: "resume file required" });
 
-      // Candidate uploading for themselves
       const user_id = req.user.id;
+      const file = req.file;
 
-      const extracted_text = await parseFileToText(file.path, file.originalname);
+      let extracted_text = "";
+      try {
+        extracted_text = await parseFileToText(file.path, file.originalname);
+      } catch (parseErr) {
+        console.error("❌ Parse error:", parseErr);
+        try {
+          fs.unlinkSync(file.path);
+        } catch {}
+        return res.status(400).json({ message: `Parse failed: ${parseErr.message}` });
+      }
+
       const file_type = path.extname(file.originalname).replace(".", "").toLowerCase();
 
+      // ✅ FIX: store into text_content (your DB column)
       const info = await dbRun(
-        "INSERT INTO resumes (user_id, original_name, stored_name, file_type, extracted_text, created_at) VALUES (?, ?, ?, ?, ?, ?)",
+        "INSERT INTO resumes (user_id, original_name, stored_name, file_type, text_content, created_at) VALUES (?, ?, ?, ?, ?, ?)",
         [user_id, file.originalname, file.filename, file_type, extracted_text, new Date().toISOString()]
       );
 
@@ -100,46 +105,10 @@ router.post("/upload", auth, requireRole("candidate"), (req, res) => {
         preview: extracted_text.slice(0, 400),
       });
     } catch (e) {
+      console.error("❌ Upload handler error:", e);
       return res.status(500).json({ message: "Server error", error: e.message });
     }
   });
-});
-
-// Public scoring endpoint still available for testing (optional)
-// You can keep this PUBLIC or protect it — I’ll keep it public.
-router.get("/score/:resumeId/:jobId", async (req, res) => {
-  try {
-    const resumeId = Number(req.params.resumeId);
-    const jobId = Number(req.params.jobId);
-    if (!resumeId || !jobId) return res.status(400).json({ message: "invalid ids" });
-
-    const resume = await dbGet("SELECT * FROM resumes WHERE id = ?", [resumeId]);
-    const job = await dbGet("SELECT * FROM jobs WHERE id = ?", [jobId]);
-    if (!resume) return res.status(404).json({ message: "resume not found" });
-    if (!job) return res.status(404).json({ message: "job not found" });
-
-    const text = (resume.extracted_text || "").toLowerCase();
-    const required = (job.description || "")
-      .split(/[,;\n]/)
-      .map((s) => s.trim().toLowerCase())
-      .filter(Boolean);
-
-    const matched_skills = required.filter((skill) => text.includes(skill));
-    const matched_count = matched_skills.length;
-    const total_required = required.length || 1;
-    const score_percentage = Math.round((matched_count / total_required) * 100);
-
-    return res.json({
-      resume_id: resumeId,
-      job_id: jobId,
-      matched_skills,
-      matched_count,
-      total_required,
-      score_percentage,
-    });
-  } catch (e) {
-    return res.status(500).json({ message: "Server error", error: e.message });
-  }
 });
 
 module.exports = router;

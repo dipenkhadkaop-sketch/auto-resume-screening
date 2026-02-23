@@ -44,7 +44,8 @@ router.get("/score/:resumeId/:jobId", auth, requireRole("admin", "hr", "recruite
     if (!resume) return res.status(404).json({ message: "resume not found" });
     if (!job) return res.status(404).json({ message: "job not found" });
 
-    const s = scoreTextAgainstJob(resume.extracted_text, job.description);
+    // ✅ FIX: use text_content
+    const s = scoreTextAgainstJob(resume.text_content, job.description);
 
     audit({ user_id: req.user.id, action: "ANALYZE_SCORE", detail: { resumeId, jobId }, ip: req.ip });
 
@@ -67,12 +68,15 @@ router.get("/rank/:jobId", auth, requireRole("admin", "hr", "recruiter"), async 
     const job = await dbGet("SELECT * FROM jobs WHERE id = ?", [jobId]);
     if (!job) return res.status(404).json({ message: "job not found" });
 
-    const resumes = await dbAll("SELECT id, user_id, original_name, extracted_text FROM resumes ORDER BY id DESC");
+    // ✅ FIX: select text_content instead of extracted_text
+    const resumes = await dbAll(
+      "SELECT id, user_id, original_name, text_content FROM resumes ORDER BY id DESC"
+    );
     if (!resumes.length) return res.status(400).json({ message: "No resumes available" });
 
     const ranked = resumes
       .map((r) => {
-        const s = scoreTextAgainstJob(r.extracted_text, job.description);
+        const s = scoreTextAgainstJob(r.text_content, job.description);
         return {
           resume_id: r.id,
           user_id: r.user_id,

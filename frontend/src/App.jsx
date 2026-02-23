@@ -14,15 +14,19 @@ export default function App() {
   const [resumeFile, setResumeFile] = useState(null);
   const [uploadedResume, setUploadedResume] = useState(null);
 
-  // Jobs / Analyze (Recruiter/HR/Admin)
+  // Jobs / Analyze
   const [jobs, setJobs] = useState([]);
-  const [jobTitle, setJobTitle] = useState("Junior Developer");
-  const [jobDescription, setJobDescription] = useState("React, Node.js, Express, SQLite, Git");
   const [selectedJobId, setSelectedJobId] = useState("");
+
+  // Create job
+  const [jobTitle, setJobTitle] = useState("Frontend Developer");
+  const [jobDescription, setJobDescription] = useState("react, node.js, express, sqlite, git");
+
+  // Analysis
   const [analysis, setAnalysis] = useState(null);
   const [ranking, setRanking] = useState(null);
 
-  // Admin users
+  // Admin users (optional)
   const [users, setUsers] = useState([]);
   const [roleEdits, setRoleEdits] = useState({});
 
@@ -62,7 +66,11 @@ export default function App() {
   async function refreshJobs() {
     const list = await request("/jobs");
     setJobs(list);
-    if (!selectedJobId && list?.[0]?.id) setSelectedJobId(String(list[0].id));
+
+    // ✅ Auto select first job if none selected
+    if (!selectedJobId && list?.length) {
+      setSelectedJobId(String(list[0].id));
+    }
   }
 
   async function refreshUsers() {
@@ -73,10 +81,17 @@ export default function App() {
     setRoleEdits(next);
   }
 
+  // Load jobs after login (for staff)
   useEffect(() => {
     if (!user) return;
-    refreshJobs().catch(() => {});
-    if (isAdmin) refreshUsers().catch(() => {});
+
+    if (isStaff) {
+      refreshJobs().catch(() => {});
+    }
+
+    if (isAdmin) {
+      refreshUsers().catch(() => {});
+    }
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
@@ -115,12 +130,14 @@ export default function App() {
   async function createJob() {
     setError("");
     if (!jobTitle.trim() || !jobDescription.trim()) return setToast("Enter title + description");
+
     setBusy(true);
     try {
       const r = await request("/jobs", {
         method: "POST",
         body: JSON.stringify({ title: jobTitle, description: jobDescription }),
       });
+
       setToast(`Job created ✅ (id ${r.id})`);
       await refreshJobs();
       setSelectedJobId(String(r.id));
@@ -133,8 +150,11 @@ export default function App() {
 
   async function runScore() {
     setError("");
-    if (!uploadedResume?.resume_id) return setError("No resume uploaded yet (need candidate upload).");
     if (!selectedJobId) return setError("Select a job first.");
+
+    // If you want to score a specific resume, you need a resume id.
+    // For demo: score the last uploaded resume if present
+    if (!uploadedResume?.resume_id) return setError("No uploaded resume found (upload as candidate first).");
 
     setBusy(true);
     try {
@@ -182,7 +202,7 @@ export default function App() {
   }
 
   const Card = ({ title, children }) => (
-    <div style={{ border: "1px solid #ddd", borderRadius: 12, padding: 16, background: "#fff", marginTop: 12 }}>
+    <div style={{ border: "1px solid #ddd", borderRadius: 14, padding: 16, background: "#fff", marginTop: 12 }}>
       <h3 style={{ margin: 0, marginBottom: 10 }}>{title}</h3>
       {children}
     </div>
@@ -201,27 +221,27 @@ export default function App() {
   }
 
   return (
-    <div style={{ fontFamily: "sans-serif", maxWidth: 1000, margin: "0 auto", padding: 16 }}>
-      <h1 style={{ marginBottom: 8 }}>Auto Resume Screening</h1>
+    <div style={{ fontFamily: "system-ui, -apple-system, Segoe UI, Roboto, sans-serif", maxWidth: 1050, margin: "0 auto", padding: 16 }}>
+      <h1 style={{ marginBottom: 8, fontSize: 56, letterSpacing: -1 }}>Auto Resume Screening</h1>
 
-      {toast && (
-        <div style={{ background: "#111", color: "#fff", padding: 10, borderRadius: 10, display: "inline-block" }}>
-          {toast}
-        </div>
-      )}
-
-      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginTop: 10 }}>
-        <div>
+      <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "center" }}>
+        <div style={{ fontSize: 18 }}>
           Logged in as <b>{user.full_name || "User"}</b> ({user.email}) — role: <b>{role}</b>
-          <div style={{ fontSize: 12, marginTop: 4 }}>Token stored: {tokenExists ? "✅" : "❌"}</div>
+          <div style={{ fontSize: 13, marginTop: 6 }}>Token stored: {tokenExists ? "✅" : "❌"}</div>
         </div>
-        <button onClick={logout} style={{ padding: "8px 12px", borderRadius: 10 }}>
+        <button onClick={logout} style={{ padding: "10px 14px", borderRadius: 14, border: "1px solid #eee", background: "#f7f7f7" }}>
           Logout
         </button>
       </div>
 
+      {toast && (
+        <div style={{ marginTop: 10, background: "#111", color: "#fff", padding: 10, borderRadius: 12, display: "inline-block" }}>
+          {toast}
+        </div>
+      )}
+
       {error && (
-        <div style={{ marginTop: 12, color: "crimson" }}>
+        <div style={{ marginTop: 12, color: "crimson", fontSize: 18 }}>
           <b>Error:</b> {error}
         </div>
       )}
@@ -232,7 +252,7 @@ export default function App() {
         {isCandidate && <button onClick={() => setTab("upload")} style={tabBtn(tab === "upload")}>Upload Resume</button>}
 
         {isStaff && <button onClick={() => setTab("jobs")} style={tabBtn(tab === "jobs")}>Jobs</button>}
-        {isStaff && <button onClick={() => setTab("analyze")} style={tabBtn(tab === "analyze")}>Analyze & Rank</button>}
+        {isStaff && <button onClick={() => setTab("rank")} style={tabBtn(tab === "rank")}>Analyze & Rank</button>}
 
         {isAdmin && <button onClick={() => setTab("admin")} style={tabBtn(tab === "admin")}>Admin</button>}
       </div>
@@ -241,13 +261,19 @@ export default function App() {
         <Card title="Dashboard">
           {isCandidate ? (
             <>
-              <p>✅ You are a Candidate. You can upload your resume.</p>
-              <p>Uploaded resume: <b>{uploadedResume?.resume_id || "None"}</b></p>
+              <p style={{ marginTop: 0 }}>✅ Candidate account. Upload your resume to be screened.</p>
+              <p>Latest uploaded resume: <b>{uploadedResume?.resume_id || "None"}</b></p>
+              {uploadedResume?.preview && (
+                <div style={{ marginTop: 10, padding: 10, borderRadius: 12, background: "#fafafa", border: "1px solid #eee" }}>
+                  <b>Extract preview:</b>
+                  <pre style={{ whiteSpace: "pre-wrap", margin: 0 }}>{uploadedResume.preview}</pre>
+                </div>
+              )}
             </>
           ) : (
             <>
-              <p>✅ You are Staff ({role}). You can create jobs and rank candidates.</p>
-              <p>Note: Candidate must upload resume first.</p>
+              <p style={{ marginTop: 0 }}>✅ Staff account ({role}). Create jobs and rank candidates.</p>
+              <p style={{ color: "#666" }}>Ranking uses resumes already uploaded in the database.</p>
             </>
           )}
         </Card>
@@ -256,92 +282,98 @@ export default function App() {
       {tab === "upload" && isCandidate && (
         <Card title="Candidate: Upload Resume (PDF/DOCX ≤10MB)">
           <input type="file" accept=".pdf,.docx" onChange={(e) => setResumeFile(e.target.files?.[0] || null)} />
-          <div style={{ marginTop: 10 }}>
-            <button onClick={uploadResume} disabled={busy} style={{ padding: "8px 12px", borderRadius: 10 }}>
+          <div style={{ marginTop: 12 }}>
+            <button onClick={uploadResume} disabled={busy} style={primaryBtn}>
               {busy ? "Uploading..." : "Upload"}
             </button>
           </div>
-          {uploadedResume && (
-            <div style={{ marginTop: 10 }}>
-              Resume ID: <b>{uploadedResume.resume_id}</b> <br />
-              File: {uploadedResume.original_name}
-            </div>
-          )}
         </Card>
       )}
 
       {tab === "jobs" && isStaff && (
         <Card title="Staff: Create Job + Select Job">
-          <div style={{ display: "grid", gap: 10 }}>
-            <label>
-              Title
+          <div style={{ display: "grid", gap: 12, maxWidth: 900 }}>
+            <div style={{ display: "grid", gap: 6 }}>
+              <b>Job Title</b>
               <input value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} style={input} />
-            </label>
-            <label>
-              Description / Skills (comma or new line separated)
+            </div>
+
+            <div style={{ display: "grid", gap: 6 }}>
+              <b>Description / Skills (comma or newline separated)</b>
               <textarea value={jobDescription} onChange={(e) => setJobDescription(e.target.value)} rows={6} style={input} />
-            </label>
-            <button onClick={createJob} disabled={busy} style={primaryBtn}>
-              {busy ? "Creating..." : "Create Job"}
-            </button>
+            </div>
 
-            <hr />
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+              <button onClick={createJob} disabled={busy} style={primaryBtn}>
+                {busy ? "Creating..." : "Create Job"}
+              </button>
+              <button onClick={() => refreshJobs()} disabled={busy} style={secondaryBtn}>
+                Refresh Jobs
+              </button>
+            </div>
 
-            <button onClick={() => refreshJobs()} disabled={busy} style={secondaryBtn}>
-              Refresh Jobs
-            </button>
-
-            <label>
-              Select Job
+            <div style={{ display: "grid", gap: 6 }}>
+              <b>Select Job</b>
               <select value={selectedJobId} onChange={(e) => setSelectedJobId(e.target.value)} style={input}>
-                <option value="">-- choose --</option>
+                {jobs.length === 0 && <option value="">No jobs yet</option>}
                 {jobs.map((j) => (
                   <option key={j.id} value={j.id}>
                     #{j.id} — {j.title}
                   </option>
                 ))}
               </select>
-            </label>
+              <div style={{ fontSize: 12, color: "#666" }}>
+                Selected jobId: <b>{selectedJobId || "None"}</b>
+              </div>
+            </div>
           </div>
         </Card>
       )}
 
-      {tab === "analyze" && isStaff && (
-        <Card title="Staff: Analyze Score + Rank Candidates">
+      {tab === "rank" && isStaff && (
+        <Card title="Staff: Analyze & Rank">
           <div style={{ marginBottom: 10 }}>
             Selected Job: <b>{selectedJobId || "None"}</b>
           </div>
 
-          <button onClick={runScore} disabled={busy} style={primaryBtn}>
-            {busy ? "Working..." : "Score (uploaded resume vs selected job)"}
-          </button>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <button onClick={runRank} disabled={busy} style={primaryBtn}>
+              {busy ? "Working..." : "Rank ALL resumes"}
+            </button>
 
-          <button onClick={runRank} disabled={busy} style={{ ...secondaryBtn, marginLeft: 8 }}>
-            {busy ? "Working..." : "Rank ALL resumes for selected job"}
-          </button>
+            <button onClick={runScore} disabled={busy} style={secondaryBtn}>
+              {busy ? "Working..." : "Score last uploaded resume"}
+            </button>
+          </div>
 
           {analysis && (
-            <div style={{ marginTop: 12 }}>
-              <b>Score:</b> {analysis.score_percentage}% <br />
-              <b>Matched:</b> {analysis.matched_skills?.join(", ") || "-"}
-            </div>
-          )}
-
-          {ranking && (
-            <div style={{ marginTop: 12 }}>
-              <b>Ranking Top 10:</b>
-              <div style={{ marginTop: 8, border: "1px solid #eee", borderRadius: 10, padding: 10 }}>
-                {ranking.ranked?.slice(0, 10).map((r, idx) => (
-                  <div key={r.resume_id} style={{ padding: "8px 0", borderBottom: "1px solid #f2f2f2" }}>
-                    <b>#{idx + 1}</b> Resume {r.resume_id} — <b>{r.score_percentage}%</b>
-                    <div style={{ fontSize: 12, color: "#555" }}>
-                      Matched: {r.matched_skills?.join(", ") || "-"}
-                    </div>
-                  </div>
-                ))}
+            <div style={{ marginTop: 14, padding: 12, borderRadius: 12, border: "1px solid #eee", background: "#fafafa" }}>
+              <div style={{ fontWeight: 800 }}>Score result</div>
+              <div style={{ marginTop: 6 }}>
+                Resume <b>{analysis.resume_id}</b> vs Job <b>{analysis.job_id}</b> — <b>{analysis.score_percentage}%</b>
+              </div>
+              <div style={{ color: "#555", marginTop: 6 }}>
+                Matched: {analysis.matched_skills?.length ? analysis.matched_skills.join(", ") : "-"}
               </div>
             </div>
           )}
+
+          {ranking?.ranked?.length ? (
+            <div style={{ marginTop: 14 }}>
+              {ranking.ranked.slice(0, 15).map((r, idx) => (
+                <div key={r.resume_id} style={{ padding: "14px 0", borderBottom: "1px solid #f0f0f0" }}>
+                  <div style={{ fontSize: 24, fontWeight: 900 }}>
+                    #{idx + 1} Resume {r.resume_id} — {r.score_percentage}%
+                  </div>
+                  <div style={{ color: "#666", fontSize: 18 }}>
+                    Matched: {r.matched_skills?.length ? r.matched_skills.join(", ") : "-"}
+                  </div>
+                </div>
+              ))}
+            </div>
+          ) : ranking ? (
+            <div style={{ marginTop: 14, color: "#666" }}>No ranked results.</div>
+          ) : null}
         </Card>
       )}
 
@@ -351,18 +383,18 @@ export default function App() {
             Refresh Users
           </button>
 
-          <div style={{ marginTop: 10, border: "1px solid #eee", borderRadius: 10, padding: 10 }}>
+          <div style={{ marginTop: 12, border: "1px solid #eee", borderRadius: 12, padding: 12 }}>
             {users.map((u) => (
-              <div key={u.id} style={{ padding: "10px 0", borderBottom: "1px solid #f2f2f2" }}>
-                <div>
-                  <b>{u.full_name || "No name"}</b> — {u.email} (id {u.id})
+              <div key={u.id} style={{ padding: "12px 0", borderBottom: "1px solid #f2f2f2" }}>
+                <div style={{ fontWeight: 700 }}>
+                  {u.full_name || "No name"} — {u.email} (id {u.id})
                 </div>
 
-                <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
+                <div style={{ display: "flex", gap: 10, alignItems: "center", marginTop: 8 }}>
                   <select
                     value={roleEdits[u.id] || u.role}
                     onChange={(e) => setRoleEdits((p) => ({ ...p, [u.id]: e.target.value }))}
-                    style={{ padding: 6 }}
+                    style={{ padding: 8, borderRadius: 10, border: "1px solid #ddd" }}
                   >
                     <option value="admin">admin</option>
                     <option value="hr">hr</option>
@@ -370,7 +402,7 @@ export default function App() {
                     <option value="candidate">candidate</option>
                   </select>
 
-                  <button onClick={() => saveRole(u.id)} disabled={busy} style={primarySmall}>
+                  <button onClick={() => saveRole(u.id)} disabled={busy} style={primaryBtn}>
                     Save
                   </button>
                 </div>
@@ -385,15 +417,14 @@ export default function App() {
 
 function tabBtn(active) {
   return {
-    padding: "8px 12px",
-    borderRadius: 10,
+    padding: "10px 14px",
+    borderRadius: 14,
     border: active ? "2px solid #111" : "1px solid #ddd",
-    background: active ? "#f3f3f3" : "#fff",
+    background: "#fff",
     cursor: "pointer",
   };
 }
 
-const input = { width: "100%", padding: 8, marginTop: 6 };
-const primaryBtn = { padding: "8px 12px", borderRadius: 10, background: "#111", color: "#fff", border: "1px solid #111" };
-const secondaryBtn = { padding: "8px 12px", borderRadius: 10, background: "#fff", border: "1px solid #ddd" };
-const primarySmall = { padding: "6px 10px", borderRadius: 10, background: "#111", color: "#fff", border: "1px solid #111" };
+const input = { width: "100%", padding: 10, borderRadius: 12, border: "1px solid #ddd" };
+const primaryBtn = { padding: "10px 14px", borderRadius: 14, background: "#111", color: "#fff", border: "1px solid #111", cursor: "pointer" };
+const secondaryBtn = { padding: "10px 14px", borderRadius: 14, background: "#fff", border: "1px solid #ddd", cursor: "pointer" };
