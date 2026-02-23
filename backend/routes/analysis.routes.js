@@ -10,6 +10,7 @@ function dbGet(sql, params = []) {
     db.get(sql, params, (err, row) => (err ? reject(err) : resolve(row)));
   });
 }
+
 function dbAll(sql, params = []) {
   return new Promise((resolve, reject) => {
     db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows)));
@@ -31,7 +32,7 @@ function scoreTextAgainstJob(textRaw, jobDescRaw) {
   return { matched_skills, matched_count, total_required, score_percentage };
 }
 
-// Score (admin/hr/recruiter)
+// ✅ Recruiter/HR/Admin can score 1 resume vs 1 job
 router.get("/score/:resumeId/:jobId", auth, requireRole("admin", "hr", "recruiter"), async (req, res) => {
   try {
     const resumeId = Number(req.params.resumeId);
@@ -57,7 +58,7 @@ router.get("/score/:resumeId/:jobId", auth, requireRole("admin", "hr", "recruite
   }
 });
 
-// Rank all resumes for a job (admin/hr/recruiter)
+// ✅ Recruiter/HR/Admin can rank ALL resumes for a job
 router.get("/rank/:jobId", auth, requireRole("admin", "hr", "recruiter"), async (req, res) => {
   try {
     const jobId = Number(req.params.jobId);

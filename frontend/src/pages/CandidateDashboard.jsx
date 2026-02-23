@@ -1,56 +1,27 @@
-import Navbar from "../components/Navbar";
+import React from "react";
 
 export default function CandidateDashboard() {
   return (
     <div>
-      <Navbar
-        links={[
-          { href: "/candidate", label: "Home" },
-          { href: "/candidate/upload", label: "Upload Resume" },
-          { href: "/candidate/feedback", label: "View Feedback" },
-        ]}
-      />
+      <h2 style={{ marginTop: 0 }}>Candidate Dashboard</h2>
+      <p style={{ color: "#6b7280" }}>
+        Upload your resume, view feedback reports, and track your screening status.
+      </p>
 
-      <div style={{ padding: 30 }}>
-        <h1 style={{ marginBottom: 20 }}>Candidate Dashboard</h1>
-
-        <div
-          style={{
-            background: "white",
-            borderRadius: 14,
-            padding: 20,
-            maxWidth: 700,
-            boxShadow: "0 6px 20px rgba(0,0,0,0.08)",
-          }}
-        >
-          <h2>Resume Upload Status</h2>
-          <a href="/candidate/upload">
-            <button
-              style={{
-                marginTop: 10,
-                padding: "10px 14px",
-                borderRadius: 8,
-                border: "none",
-                background: "#0b4cb8",
-                color: "white",
-                cursor: "pointer",
-                fontWeight: 700,
-              }}
-            >
-              Upload New Resume
-            </button>
-          </a>
-
-          <hr style={{ margin: "20px 0" }} />
-
-          <h2>Latest Feedback Reports</h2>
-          <ul style={{ marginTop: 10 }}>
-            <li><a href="/candidate/feedback">Feedback Report 1</a></li>
-            <li><a href="/candidate/feedback">Feedback Report 2</a></li>
-            <li><a href="/candidate/feedback">Feedback Report 3</a></li>
-          </ul>
-        </div>
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12 }}>
+        <Card title="Upload Resume" text="Upload PDF/DOCX (≤10MB) and track status." />
+        <Card title="Feedback Reports" text="View strengths and skill gaps after screening." />
+        <Card title="Notifications" text="See system messages and next steps." />
       </div>
+    </div>
+  );
+}
+
+function Card({ title, text }) {
+  return (
+    <div style={{ border: "1px solid #e5e7eb", borderRadius: 12, padding: 12, background: "#f9fafb" }}>
+      <div style={{ fontWeight: 800 }}>{title}</div>
+      <div style={{ marginTop: 6, color: "#6b7280" }}>{text}</div>
     </div>
   );
 }

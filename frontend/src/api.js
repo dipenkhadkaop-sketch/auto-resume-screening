@@ -21,8 +21,8 @@ export async function request(path, options = {}) {
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
   const res = await fetch(`${API}${path}`, { ...options, headers });
-
   const text = await res.text();
+
   let data = {};
   try {
     data = text ? JSON.parse(text) : {};
@@ -30,9 +30,6 @@ export async function request(path, options = {}) {
     data = { raw: text };
   }
 
-  if (!res.ok) {
-    throw new Error(data?.message || `Request failed (${res.status})`);
-  }
-
+  if (!res.ok) throw new Error(data?.message || `Request failed (${res.status})`);
   return data;
 }

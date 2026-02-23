@@ -1,4 +1,3 @@
-// backend/routes/auth.js
 const router = require("express").Router();
 const bcrypt = require("bcryptjs");
 const jwt = require("jsonwebtoken");
@@ -29,55 +28,50 @@ function dbRun(sql, params = []) {
   });
 }
 
-// Register (default role recruiter)
+// PUBLIC: Register (NORMAL USERS => candidate)
 router.post("/register", async (req, res) => {
   try {
-    const full_name = req.body?.full_name ? String(req.body.full_name).trim() : null;
-    const email = String(req.body?.email || "").trim().toLowerCase();
-    const password = String(req.body?.password || "");
-
+    const { full_name, email, password } = req.body;
     if (!email || !password) return res.status(400).json({ message: "email and password are required" });
 
-    const existing = await dbGet("SELECT id FROM users WHERE email = ?", [email]);
+    const existing = await dbGet("SELECT id FROM users WHERE email = ?", [String(email).toLowerCase()]);
     if (existing) return res.status(409).json({ message: "Email already exists" });
 
     const password_hash = await bcrypt.hash(password, 10);
 
     const info = await dbRun(
       "INSERT INTO users (full_name, email, password_hash, role) VALUES (?, ?, ?, ?)",
-      [full_name, email, password_hash, "recruiter"]
+      [full_name || null, String(email).toLowerCase(), password_hash, "candidate"]
     );
 
     audit({ user_id: info.lastID, action: "REGISTER", detail: { email }, ip: req.ip });
 
     return res.status(201).json({
       message: "User created",
-      user: { id: info.lastID, full_name, email, role: "recruiter" },
+      user: { id: info.lastID, full_name: full_name || null, email: String(email).toLowerCase(), role: "candidate" },
     });
   } catch (e) {
     return res.status(500).json({ message: "Server error", error: e.message });
   }
 });
 
-// Login
+// PUBLIC: Login
 router.post("/login", async (req, res) => {
   try {
-    const email = String(req.body?.email || "").trim().toLowerCase();
-    const password = String(req.body?.password || "");
-
+    const { email, password } = req.body;
     if (!email || !password) return res.status(400).json({ message: "email and password are required" });
 
-    const user = await dbGet("SELECT * FROM users WHERE email = ?", [email]);
+    const user = await dbGet("SELECT * FROM users WHERE email = ?", [String(email).toLowerCase()]);
     if (!user) return res.status(401).json({ message: "Invalid email or password" });
 
-    const hash = user.password_hash;
-    if (!hash) return res.status(500).json({ message: "Server error: password hash missing" });
-
-    const ok = await bcrypt.compare(password, hash);
+    const ok = await bcrypt.compare(password, user.password_hash);
     if (!ok) return res.status(401).json({ message: "Invalid email or password" });
 
-    const role = user.role || "recruiter";
-    const token = jwt.sign({ id: user.id, email: user.email, role }, JWT_SECRET, { expiresIn: "7d" });
+    const role = user.role || "candidate";
+
+    const token = jwt.sign({ id: user.id, email: user.email, role }, JWT_SECRET, {
+      expiresIn: "7d",
+    });
 
     audit({ user_id: user.id, action: "LOGIN", detail: { email }, ip: req.ip });
 
@@ -91,7 +85,7 @@ router.post("/login", async (req, res) => {
   }
 });
 
-// Admin: list users (UC-09)
+// ADMIN: List users (for UI)
 router.get("/users", auth, requireRole("admin"), async (req, res) => {
   try {
     const rows = await dbAll("SELECT id, full_name, email, role FROM users ORDER BY id DESC");
@@ -101,13 +95,13 @@ router.get("/users", auth, requireRole("admin"), async (req, res) => {
   }
 });
 
-// Forgot password (demo returns token)
+// FR-03: Forgot password (demo returns token)
 router.post("/forgot-password", async (req, res) => {
   try {
-    const email = String(req.body?.email || "").trim().toLowerCase();
+    const { email } = req.body;
     if (!email) return res.status(400).json({ message: "email required" });
 
-    const user = await dbGet("SELECT id, email FROM users WHERE email = ?", [email]);
+    const user = await dbGet("SELECT id, email FROM users WHERE email = ?", [String(email).toLowerCase()]);
     if (!user) return res.json({ message: "If the email exists, a reset token was generated." });
 
     const resetToken = crypto.randomBytes(24).toString("hex");
@@ -127,18 +121,15 @@ router.post("/forgot-password", async (req, res) => {
   }
 });
 
-// Reset password
+// FR-03: Reset password
 router.post("/reset-password", async (req, res) => {
   try {
-    const email = String(req.body?.email || "").trim().toLowerCase();
-    const resetToken = String(req.body?.resetToken || "");
-    const newPassword = String(req.body?.newPassword || "");
-
+    const { email, resetToken, newPassword } = req.body;
     if (!email || !resetToken || !newPassword) {
       return res.status(400).json({ message: "email, resetToken, newPassword required" });
     }
 
-    const user = await dbGet("SELECT id FROM users WHERE email = ?", [email]);
+    const user = await dbGet("SELECT id FROM users WHERE email = ?", [String(email).toLowerCase()]);
     if (!user) return res.status(400).json({ message: "Invalid reset request" });
 
     const token_hash = crypto.createHash("sha256").update(resetToken).digest("hex");
@@ -166,18 +157,16 @@ router.post("/reset-password", async (req, res) => {
   }
 });
 
-// Admin sets role (UC-09)
+// FR-04: Admin sets role (NOW includes candidate)
 router.post("/set-role", auth, requireRole("admin"), async (req, res) => {
   try {
-    const userId = Number(req.body?.userId);
-    const role = String(req.body?.role || "").trim();
-
+    const { userId, role } = req.body;
     if (!userId || !role) return res.status(400).json({ message: "userId and role required" });
 
-    const allowed = ["admin", "hr", "recruiter"];
+    const allowed = ["admin", "hr", "recruiter", "candidate"];
     if (!allowed.includes(role)) return res.status(400).json({ message: "Invalid role" });
 
-    await dbRun("UPDATE users SET role = ? WHERE id = ?", [role, userId]);
+    await dbRun("UPDATE users SET role = ? WHERE id = ?", [role, Number(userId)]);
 
     audit({ user_id: req.user.id, action: "SET_ROLE", detail: { userId, role }, ip: req.ip });
 

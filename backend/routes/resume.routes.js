@@ -6,7 +6,9 @@ const fs = require("fs");
 const pdfParse = require("pdf-parse");
 const mammoth = require("mammoth");
 const db = require("../db/database");
+
 const auth = require("../middleware/auth");
+const requireRole = require("../middleware/requireRole");
 const { audit } = require("../utils/audit");
 
 const uploadDir = path.join(__dirname, "..", "uploads");
@@ -58,23 +60,22 @@ async function parseFileToText(filePath, originalName) {
   throw new Error("Only PDF and DOCX supported");
 }
 
-// Upload resume (any logged-in user)
-router.post("/upload", auth, (req, res) => {
+// ✅ Candidate uploads resume only
+router.post("/upload", auth, requireRole("candidate"), (req, res) => {
   upload.single("resume")(req, res, async (err) => {
     try {
       if (err) {
-        // multer file size error
         if (err.code === "LIMIT_FILE_SIZE") {
           return res.status(413).json({ message: "File too large (max 10MB)" });
         }
         return res.status(400).json({ message: err.message });
       }
 
-      const user_id = Number(req.body?.user_id || req.user.id);
-      if (!user_id) return res.status(400).json({ message: "user_id required" });
-
       const file = req.file;
       if (!file) return res.status(400).json({ message: "resume file required" });
+
+      // Candidate uploading for themselves
+      const user_id = req.user.id;
 
       const extracted_text = await parseFileToText(file.path, file.originalname);
       const file_type = path.extname(file.originalname).replace(".", "").toLowerCase();
@@ -104,7 +105,8 @@ router.post("/upload", auth, (req, res) => {
   });
 });
 
-// Score a resume vs a job (GET /resume/score/:resumeId/:jobId)
+// Public scoring endpoint still available for testing (optional)
+// You can keep this PUBLIC or protect it — I’ll keep it public.
 router.get("/score/:resumeId/:jobId", async (req, res) => {
   try {
     const resumeId = Number(req.params.resumeId);

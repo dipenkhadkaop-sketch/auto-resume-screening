@@ -1,41 +1,37 @@
 import React, { useEffect, useMemo, useState } from "react";
 import Login from "./components/Login";
-import { request, getToken, clearToken } from "./api";
+import { request, clearToken, getToken } from "./api";
 
 export default function App() {
   const [user, setUser] = useState(null);
   const [health, setHealth] = useState(null);
   const [error, setError] = useState("");
-  const [toast, setToast] = useState("");
+  const [tab, setTab] = useState("dashboard");
   const [busy, setBusy] = useState(false);
+  const [toast, setToast] = useState("");
 
-  const [tab, setTab] = useState("upload"); // upload | jobs | analyze | feedback | admin
-
-  // Resume state
+  // Candidate upload
   const [resumeFile, setResumeFile] = useState(null);
   const [uploadedResume, setUploadedResume] = useState(null);
 
-  // Jobs state
+  // Jobs / Analyze (Recruiter/HR/Admin)
   const [jobs, setJobs] = useState([]);
   const [jobTitle, setJobTitle] = useState("Junior Developer");
   const [jobDescription, setJobDescription] = useState("React, Node.js, Express, SQLite, Git");
   const [selectedJobId, setSelectedJobId] = useState("");
+  const [analysis, setAnalysis] = useState(null);
+  const [ranking, setRanking] = useState(null);
 
-  // Analysis state
-  const [analysisResult, setAnalysisResult] = useState(null);
-  const [ranked, setRanked] = useState(null);
-
-  // Feedback state
-  const [feedbackText, setFeedbackText] = useState("Great match on core skills. Consider adding more project examples.");
-  const [feedbackList, setFeedbackList] = useState([]);
-
-  // Admin state
+  // Admin users
   const [users, setUsers] = useState([]);
-  const [roleEdits, setRoleEdits] = useState({}); // userId -> role
+  const [roleEdits, setRoleEdits] = useState({});
 
+  const role = user?.role;
   const tokenExists = useMemo(() => Boolean(getToken()), [user]);
-  const canCreateJob = useMemo(() => Boolean(user && (user.role === "admin" || user.role === "hr" || user.role === "recruiter")), [user]);
-  const isAdmin = useMemo(() => Boolean(user && user.role === "admin"), [user]);
+
+  const isCandidate = role === "candidate";
+  const isStaff = role === "recruiter" || role === "hr" || role === "admin";
+  const isAdmin = role === "admin";
 
   useEffect(() => {
     (async () => {
@@ -54,62 +50,61 @@ export default function App() {
     return () => clearTimeout(t);
   }, [toast]);
 
+  useEffect(() => {
+    const raw = localStorage.getItem("user");
+    if (raw) {
+      try {
+        setUser(JSON.parse(raw));
+      } catch {}
+    }
+  }, []);
+
   async function refreshJobs() {
-    try {
-      const list = await request("/jobs");
-      setJobs(list);
-      if (!selectedJobId && list?.[0]?.id) setSelectedJobId(String(list[0].id));
-    } catch (e) {
-      setError(e.message);
-    }
+    const list = await request("/jobs");
+    setJobs(list);
+    if (!selectedJobId && list?.[0]?.id) setSelectedJobId(String(list[0].id));
   }
 
-  async function refreshAdminUsers() {
-    if (!isAdmin) return;
-    try {
-      const list = await request("/auth/users");
-      setUsers(list);
-      const next = {};
-      list.forEach((u) => (next[u.id] = u.role));
-      setRoleEdits(next);
-    } catch (e) {
-      setError(e.message);
-    }
+  async function refreshUsers() {
+    const list = await request("/auth/users");
+    setUsers(list);
+    const next = {};
+    list.forEach((u) => (next[u.id] = u.role));
+    setRoleEdits(next);
   }
 
-  // Load jobs after login
   useEffect(() => {
     if (!user) return;
-    refreshJobs();
-    refreshAdminUsers();
+    refreshJobs().catch(() => {});
+    if (isAdmin) refreshUsers().catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
   function logout() {
     clearToken();
+    localStorage.removeItem("user");
     setUser(null);
-    setTab("upload");
+    setTab("dashboard");
     setToast("Logged out");
-    setError("");
     setUploadedResume(null);
-    setAnalysisResult(null);
-    setRanked(null);
-    setUsers([]);
-    setJobs([]);
+    setAnalysis(null);
+    setRanking(null);
+    setError("");
   }
 
   async function uploadResume() {
-    if (!resumeFile) return setToast("Choose a PDF/DOCX resume first");
-    setBusy(true);
     setError("");
+    if (!resumeFile) return setToast("Choose a PDF/DOCX file first");
+
+    setBusy(true);
     try {
       const fd = new FormData();
       fd.append("resume", resumeFile);
-      // server uses auth token, but also accepts user_id; we can omit user_id safely
-      const data = await request("/resume/upload", { method: "POST", body: fd });
-      setUploadedResume(data);
+
+      const r = await request("/resume/upload", { method: "POST", body: fd });
+      setUploadedResume(r);
       setToast("Resume uploaded ✅");
-      setTab("analyze");
+      setTab("dashboard");
     } catch (e) {
       setError(e.message);
     } finally {
@@ -118,19 +113,17 @@ export default function App() {
   }
 
   async function createJob() {
-    if (!canCreateJob) return setError("Only logged-in recruiter/hr/admin can create jobs");
-    if (!jobTitle.trim() || !jobDescription.trim()) return setToast("Enter title and description");
-    setBusy(true);
     setError("");
+    if (!jobTitle.trim() || !jobDescription.trim()) return setToast("Enter title + description");
+    setBusy(true);
     try {
-      const data = await request("/jobs", {
+      const r = await request("/jobs", {
         method: "POST",
         body: JSON.stringify({ title: jobTitle, description: jobDescription }),
       });
-      setToast(`Job created ✅ (id ${data.id})`);
+      setToast(`Job created ✅ (id ${r.id})`);
       await refreshJobs();
-      setSelectedJobId(String(data.id));
-      setTab("analyze");
+      setSelectedJobId(String(r.id));
     } catch (e) {
       setError(e.message);
     } finally {
@@ -138,19 +131,16 @@ export default function App() {
     }
   }
 
-  async function analyzeScore() {
-    const resume_id = uploadedResume?.resume_id;
-    const job_id = Number(selectedJobId);
-
-    if (!resume_id) return setError("Upload a resume first.");
-    if (!job_id) return setError("Select a job first.");
+  async function runScore() {
+    setError("");
+    if (!uploadedResume?.resume_id) return setError("No resume uploaded yet (need candidate upload).");
+    if (!selectedJobId) return setError("Select a job first.");
 
     setBusy(true);
-    setError("");
     try {
-      const data = await request(`/analysis/score/${resume_id}/${job_id}`);
-      setAnalysisResult(data);
-      setToast("Analysis complete ✅");
+      const r = await request(`/analysis/score/${uploadedResume.resume_id}/${Number(selectedJobId)}`);
+      setAnalysis(r);
+      setToast("Scored ✅");
     } catch (e) {
       setError(e.message);
     } finally {
@@ -158,57 +148,15 @@ export default function App() {
     }
   }
 
-  async function analyzeRank() {
-    const job_id = Number(selectedJobId);
-    if (!job_id) return setError("Select a job first.");
+  async function runRank() {
+    setError("");
+    if (!selectedJobId) return setError("Select a job first.");
 
     setBusy(true);
-    setError("");
     try {
-      const data = await request(`/analysis/rank/${job_id}`);
-      setRanked(data);
-      setToast("Ranking loaded ✅");
-      setTab("analyze");
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function loadFeedback() {
-    const resume_id = uploadedResume?.resume_id;
-    if (!resume_id) return setError("Upload a resume first.");
-    setBusy(true);
-    setError("");
-    try {
-      const list = await request(`/feedback/resume/${resume_id}`);
-      setFeedbackList(list);
-      setToast("Feedback loaded ✅");
-    } catch (e) {
-      setError(e.message);
-    } finally {
-      setBusy(false);
-    }
-  }
-
-  async function createFeedback() {
-    const resume_id = uploadedResume?.resume_id;
-    const job_id = Number(selectedJobId);
-    if (!resume_id) return setError("Upload a resume first.");
-    if (!job_id) return setError("Select a job first.");
-    if (!feedbackText.trim()) return setToast("Write feedback text");
-
-    setBusy(true);
-    setError("");
-    try {
-      await request("/feedback", {
-        method: "POST",
-        body: JSON.stringify({ resume_id, job_id, feedback_text: feedbackText }),
-      });
-      setToast("Feedback created ✅");
-      await loadFeedback();
-      setTab("feedback");
+      const r = await request(`/analysis/rank/${Number(selectedJobId)}`);
+      setRanking(r);
+      setToast("Ranked ✅");
     } catch (e) {
       setError(e.message);
     } finally {
@@ -217,17 +165,15 @@ export default function App() {
   }
 
   async function saveRole(userId) {
-    const role = roleEdits[userId];
-    if (!role) return;
-    setBusy(true);
     setError("");
+    setBusy(true);
     try {
       await request("/auth/set-role", {
         method: "POST",
-        body: JSON.stringify({ userId, role }),
+        body: JSON.stringify({ userId, role: roleEdits[userId] }),
       });
       setToast("Role updated ✅");
-      await refreshAdminUsers();
+      await refreshUsers();
     } catch (e) {
       setError(e.message);
     } finally {
@@ -242,257 +188,212 @@ export default function App() {
     </div>
   );
 
-  const TabBtn = ({ id, label, show = true }) => {
-    if (!show) return null;
-    const active = tab === id;
+  if (!user) {
     return (
-      <button
-        onClick={() => setTab(id)}
-        style={{
-          padding: "8px 12px",
-          borderRadius: 10,
-          border: active ? "2px solid #111" : "1px solid #ddd",
-          background: active ? "#f3f3f3" : "#fff",
-          cursor: "pointer",
-        }}
-      >
-        {label}
-      </button>
+      <div>
+        <div style={{ padding: 12 }}>
+          <strong>Backend health:</strong>{" "}
+          {health?.ok ? "✅ OK" : error ? `❌ ${error}` : "Loading..."}
+        </div>
+        <Login onLogin={(u) => setUser(u)} />
+      </div>
     );
-  };
+  }
 
   return (
-    <div style={{ fontFamily: "sans-serif", maxWidth: 980, margin: "0 auto", padding: 16 }}>
-      <h1 style={{ marginBottom: 6 }}>Auto Resume Screening</h1>
-
-      <div style={{ marginBottom: 12 }}>
-        <strong>Backend:</strong>{" "}
-        {health?.ok ? "✅ OK" : error ? `❌ ${error}` : "Loading..."}
-      </div>
+    <div style={{ fontFamily: "sans-serif", maxWidth: 1000, margin: "0 auto", padding: 16 }}>
+      <h1 style={{ marginBottom: 8 }}>Auto Resume Screening</h1>
 
       {toast && (
-        <div style={{ background: "#111", color: "#fff", display: "inline-block", padding: 10, borderRadius: 10, marginBottom: 10 }}>
+        <div style={{ background: "#111", color: "#fff", padding: 10, borderRadius: 10, display: "inline-block" }}>
           {toast}
         </div>
       )}
 
-      {!user ? (
-        <Login
-          onLogin={(u) => {
-            setUser(u);
-            setToast(`Logged in as ${u.role} ✅`);
-          }}
-        />
-      ) : (
-        <>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap" }}>
-            <div>
-              Logged in as <b>{user.full_name}</b> ({user.email}) — role: <b>{user.role}</b>
-              <div style={{ fontSize: 12, marginTop: 4 }}>Token: {tokenExists ? "✅ stored" : "❌ missing"}</div>
-            </div>
-            <button onClick={logout} style={{ padding: "8px 12px", borderRadius: 10 }}>
-              Logout
+      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, flexWrap: "wrap", marginTop: 10 }}>
+        <div>
+          Logged in as <b>{user.full_name || "User"}</b> ({user.email}) — role: <b>{role}</b>
+          <div style={{ fontSize: 12, marginTop: 4 }}>Token stored: {tokenExists ? "✅" : "❌"}</div>
+        </div>
+        <button onClick={logout} style={{ padding: "8px 12px", borderRadius: 10 }}>
+          Logout
+        </button>
+      </div>
+
+      {error && (
+        <div style={{ marginTop: 12, color: "crimson" }}>
+          <b>Error:</b> {error}
+        </div>
+      )}
+
+      <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 14 }}>
+        <button onClick={() => setTab("dashboard")} style={tabBtn(tab === "dashboard")}>Dashboard</button>
+
+        {isCandidate && <button onClick={() => setTab("upload")} style={tabBtn(tab === "upload")}>Upload Resume</button>}
+
+        {isStaff && <button onClick={() => setTab("jobs")} style={tabBtn(tab === "jobs")}>Jobs</button>}
+        {isStaff && <button onClick={() => setTab("analyze")} style={tabBtn(tab === "analyze")}>Analyze & Rank</button>}
+
+        {isAdmin && <button onClick={() => setTab("admin")} style={tabBtn(tab === "admin")}>Admin</button>}
+      </div>
+
+      {tab === "dashboard" && (
+        <Card title="Dashboard">
+          {isCandidate ? (
+            <>
+              <p>✅ You are a Candidate. You can upload your resume.</p>
+              <p>Uploaded resume: <b>{uploadedResume?.resume_id || "None"}</b></p>
+            </>
+          ) : (
+            <>
+              <p>✅ You are Staff ({role}). You can create jobs and rank candidates.</p>
+              <p>Note: Candidate must upload resume first.</p>
+            </>
+          )}
+        </Card>
+      )}
+
+      {tab === "upload" && isCandidate && (
+        <Card title="Candidate: Upload Resume (PDF/DOCX ≤10MB)">
+          <input type="file" accept=".pdf,.docx" onChange={(e) => setResumeFile(e.target.files?.[0] || null)} />
+          <div style={{ marginTop: 10 }}>
+            <button onClick={uploadResume} disabled={busy} style={{ padding: "8px 12px", borderRadius: 10 }}>
+              {busy ? "Uploading..." : "Upload"}
             </button>
           </div>
+          {uploadedResume && (
+            <div style={{ marginTop: 10 }}>
+              Resume ID: <b>{uploadedResume.resume_id}</b> <br />
+              File: {uploadedResume.original_name}
+            </div>
+          )}
+        </Card>
+      )}
 
-          {error && (
-            <div style={{ marginTop: 12, color: "crimson" }}>
-              <b>Error:</b> {error}
+      {tab === "jobs" && isStaff && (
+        <Card title="Staff: Create Job + Select Job">
+          <div style={{ display: "grid", gap: 10 }}>
+            <label>
+              Title
+              <input value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} style={input} />
+            </label>
+            <label>
+              Description / Skills (comma or new line separated)
+              <textarea value={jobDescription} onChange={(e) => setJobDescription(e.target.value)} rows={6} style={input} />
+            </label>
+            <button onClick={createJob} disabled={busy} style={primaryBtn}>
+              {busy ? "Creating..." : "Create Job"}
+            </button>
+
+            <hr />
+
+            <button onClick={() => refreshJobs()} disabled={busy} style={secondaryBtn}>
+              Refresh Jobs
+            </button>
+
+            <label>
+              Select Job
+              <select value={selectedJobId} onChange={(e) => setSelectedJobId(e.target.value)} style={input}>
+                <option value="">-- choose --</option>
+                {jobs.map((j) => (
+                  <option key={j.id} value={j.id}>
+                    #{j.id} — {j.title}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+        </Card>
+      )}
+
+      {tab === "analyze" && isStaff && (
+        <Card title="Staff: Analyze Score + Rank Candidates">
+          <div style={{ marginBottom: 10 }}>
+            Selected Job: <b>{selectedJobId || "None"}</b>
+          </div>
+
+          <button onClick={runScore} disabled={busy} style={primaryBtn}>
+            {busy ? "Working..." : "Score (uploaded resume vs selected job)"}
+          </button>
+
+          <button onClick={runRank} disabled={busy} style={{ ...secondaryBtn, marginLeft: 8 }}>
+            {busy ? "Working..." : "Rank ALL resumes for selected job"}
+          </button>
+
+          {analysis && (
+            <div style={{ marginTop: 12 }}>
+              <b>Score:</b> {analysis.score_percentage}% <br />
+              <b>Matched:</b> {analysis.matched_skills?.join(", ") || "-"}
             </div>
           )}
 
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginTop: 14 }}>
-            <TabBtn id="upload" label="Upload Resume" />
-            <TabBtn id="jobs" label="Jobs" />
-            <TabBtn id="analyze" label="Analyze & Ranking" />
-            <TabBtn id="feedback" label="Feedback" />
-            <TabBtn id="admin" label="Admin Panel" show={isAdmin} />
-          </div>
-
-          {/* Upload */}
-          {tab === "upload" && (
-            <Card title="Upload Resume (PDF/DOCX, max 10MB)">
-              <input
-                type="file"
-                accept=".pdf,.docx"
-                onChange={(e) => setResumeFile(e.target.files?.[0] || null)}
-              />
-              <div style={{ marginTop: 10 }}>
-                <button onClick={uploadResume} disabled={busy} style={{ padding: "8px 12px", borderRadius: 10 }}>
-                  {busy ? "Uploading..." : "Upload"}
-                </button>
+          {ranking && (
+            <div style={{ marginTop: 12 }}>
+              <b>Ranking Top 10:</b>
+              <div style={{ marginTop: 8, border: "1px solid #eee", borderRadius: 10, padding: 10 }}>
+                {ranking.ranked?.slice(0, 10).map((r, idx) => (
+                  <div key={r.resume_id} style={{ padding: "8px 0", borderBottom: "1px solid #f2f2f2" }}>
+                    <b>#{idx + 1}</b> Resume {r.resume_id} — <b>{r.score_percentage}%</b>
+                    <div style={{ fontSize: 12, color: "#555" }}>
+                      Matched: {r.matched_skills?.join(", ") || "-"}
+                    </div>
+                  </div>
+                ))}
               </div>
-
-              {uploadedResume && (
-                <div style={{ marginTop: 10, fontSize: 14 }}>
-                  <b>Resume ID:</b> {uploadedResume.resume_id} <br />
-                  <b>File:</b> {uploadedResume.original_name}
-                </div>
-              )}
-            </Card>
+            </div>
           )}
+        </Card>
+      )}
 
-          {/* Jobs */}
-          {tab === "jobs" && (
-            <Card title="Jobs (Create + List)">
-              <div style={{ display: "grid", gap: 10 }}>
-                <div style={{ display: "grid", gap: 6 }}>
-                  <label>Title</label>
-                  <input value={jobTitle} onChange={(e) => setJobTitle(e.target.value)} style={{ padding: 8 }} />
-                </div>
-                <div style={{ display: "grid", gap: 6 }}>
-                  <label>Description / Skills (comma or new line separated)</label>
-                  <textarea value={jobDescription} onChange={(e) => setJobDescription(e.target.value)} rows={6} style={{ padding: 8 }} />
-                </div>
-                <button onClick={createJob} disabled={busy} style={{ padding: "8px 12px", borderRadius: 10 }}>
-                  {busy ? "Creating..." : "Create Job"}
-                </button>
+      {tab === "admin" && isAdmin && (
+        <Card title="Admin: Manage Users & Roles">
+          <button onClick={() => refreshUsers()} disabled={busy} style={secondaryBtn}>
+            Refresh Users
+          </button>
 
-                <hr />
-
-                <button onClick={refreshJobs} disabled={busy} style={{ padding: "8px 12px", borderRadius: 10 }}>
-                  Refresh Job List
-                </button>
-
+          <div style={{ marginTop: 10, border: "1px solid #eee", borderRadius: 10, padding: 10 }}>
+            {users.map((u) => (
+              <div key={u.id} style={{ padding: "10px 0", borderBottom: "1px solid #f2f2f2" }}>
                 <div>
-                  <label>Select Job</label>
-                  <select value={selectedJobId} onChange={(e) => setSelectedJobId(e.target.value)} style={{ width: "100%", padding: 8, marginTop: 6 }}>
-                    <option value="">-- choose --</option>
-                    {jobs.map((j) => (
-                      <option key={j.id} value={j.id}>
-                        #{j.id} — {j.title}
-                      </option>
-                    ))}
+                  <b>{u.full_name || "No name"}</b> — {u.email} (id {u.id})
+                </div>
+
+                <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
+                  <select
+                    value={roleEdits[u.id] || u.role}
+                    onChange={(e) => setRoleEdits((p) => ({ ...p, [u.id]: e.target.value }))}
+                    style={{ padding: 6 }}
+                  >
+                    <option value="admin">admin</option>
+                    <option value="hr">hr</option>
+                    <option value="recruiter">recruiter</option>
+                    <option value="candidate">candidate</option>
                   </select>
-                </div>
 
-                <div style={{ fontSize: 12, color: "#555" }}>
-                  Tip: Admin/HR/Recruiter can create jobs. Recruiter can still analyze using existing jobs.
-                </div>
-              </div>
-            </Card>
-          )}
-
-          {/* Analyze */}
-          {tab === "analyze" && (
-            <Card title="Analyze Score + Ranking">
-              <div style={{ display: "grid", gap: 10 }}>
-                <div>
-                  <b>Selected Job:</b> {selectedJobId || "None"}
-                </div>
-                <div>
-                  <b>Uploaded Resume:</b> {uploadedResume?.resume_id || "None"}
-                </div>
-
-                <button onClick={analyzeScore} disabled={busy} style={{ padding: "8px 12px", borderRadius: 10 }}>
-                  {busy ? "Analyzing..." : "Score this Resume vs Job"}
-                </button>
-
-                <button onClick={analyzeRank} disabled={busy} style={{ padding: "8px 12px", borderRadius: 10 }}>
-                  {busy ? "Loading..." : "Rank ALL Resumes for this Job"}
-                </button>
-
-                {analysisResult && (
-                  <div style={{ marginTop: 10 }}>
-                    <h4 style={{ marginBottom: 6 }}>Score Result</h4>
-                    <div>Score: <b>{analysisResult.score_percentage}%</b></div>
-                    <div>Matched: {analysisResult.matched_skills?.join(", ") || "-"}</div>
-                  </div>
-                )}
-
-                {ranked && (
-                  <div style={{ marginTop: 10 }}>
-                    <h4 style={{ marginBottom: 6 }}>Ranked List</h4>
-                    <div style={{ border: "1px solid #eee", borderRadius: 10, padding: 10 }}>
-                      {ranked.ranked?.slice(0, 10).map((r, idx) => (
-                        <div key={r.resume_id} style={{ padding: "8px 0", borderBottom: "1px solid #f2f2f2" }}>
-                          <b>#{idx + 1}</b> Resume {r.resume_id} — <b>{r.score_percentage}%</b>
-                          <div style={{ fontSize: 12, color: "#555" }}>
-                            Matched: {r.matched_skills?.join(", ") || "-"}
-                          </div>
-                        </div>
-                      ))}
-                    </div>
-                  </div>
-                )}
-              </div>
-            </Card>
-          )}
-
-          {/* Feedback */}
-          {tab === "feedback" && (
-            <Card title="Feedback">
-              <div style={{ display: "grid", gap: 10 }}>
-                <button onClick={loadFeedback} disabled={busy} style={{ padding: "8px 12px", borderRadius: 10 }}>
-                  {busy ? "Loading..." : "Load Feedback for Uploaded Resume"}
-                </button>
-
-                <div style={{ display: "grid", gap: 6 }}>
-                  <label>Write Feedback (for selected job + uploaded resume)</label>
-                  <textarea value={feedbackText} onChange={(e) => setFeedbackText(e.target.value)} rows={5} style={{ padding: 8 }} />
-                </div>
-
-                <button onClick={createFeedback} disabled={busy} style={{ padding: "8px 12px", borderRadius: 10 }}>
-                  {busy ? "Saving..." : "Create Feedback"}
-                </button>
-
-                <div>
-                  <h4 style={{ marginBottom: 6 }}>Feedback History</h4>
-                  {feedbackList.length === 0 ? (
-                    <div style={{ color: "#555" }}>No feedback yet.</div>
-                  ) : (
-                    <div style={{ border: "1px solid #eee", borderRadius: 10, padding: 10 }}>
-                      {feedbackList.map((f) => (
-                        <div key={f.id} style={{ padding: "8px 0", borderBottom: "1px solid #f2f2f2" }}>
-                          <div style={{ fontSize: 12, color: "#555" }}>
-                            #{f.id} — resume {f.resume_id} job {f.job_id}
-                          </div>
-                          <div>{f.feedback_text}</div>
-                        </div>
-                      ))}
-                    </div>
-                  )}
+                  <button onClick={() => saveRole(u.id)} disabled={busy} style={primarySmall}>
+                    Save
+                  </button>
                 </div>
               </div>
-            </Card>
-          )}
-
-          {/* Admin */}
-          {tab === "admin" && isAdmin && (
-            <Card title="Admin Panel (Manage Users & Roles)">
-              <div style={{ display: "grid", gap: 10 }}>
-                <button onClick={refreshAdminUsers} disabled={busy} style={{ padding: "8px 12px", borderRadius: 10 }}>
-                  Refresh Users
-                </button>
-
-                <div style={{ border: "1px solid #eee", borderRadius: 10, padding: 10 }}>
-                  {users.map((u) => (
-                    <div key={u.id} style={{ padding: "10px 0", borderBottom: "1px solid #f2f2f2" }}>
-                      <div>
-                        <b>{u.full_name || "No name"}</b> — {u.email} (id: {u.id})
-                      </div>
-                      <div style={{ display: "flex", gap: 8, alignItems: "center", marginTop: 6 }}>
-                        <select
-                          value={roleEdits[u.id] || u.role}
-                          onChange={(e) => setRoleEdits((prev) => ({ ...prev, [u.id]: e.target.value }))}
-                          style={{ padding: 6 }}
-                        >
-                          <option value="admin">admin</option>
-                          <option value="hr">hr</option>
-                          <option value="recruiter">recruiter</option>
-                        </select>
-                        <button onClick={() => saveRole(u.id)} disabled={busy} style={{ padding: "6px 10px", borderRadius: 10 }}>
-                          Save
-                        </button>
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
-            </Card>
-          )}
-        </>
+            ))}
+          </div>
+        </Card>
       )}
     </div>
   );
 }
+
+function tabBtn(active) {
+  return {
+    padding: "8px 12px",
+    borderRadius: 10,
+    border: active ? "2px solid #111" : "1px solid #ddd",
+    background: active ? "#f3f3f3" : "#fff",
+    cursor: "pointer",
+  };
+}
+
+const input = { width: "100%", padding: 8, marginTop: 6 };
+const primaryBtn = { padding: "8px 12px", borderRadius: 10, background: "#111", color: "#fff", border: "1px solid #111" };
+const secondaryBtn = { padding: "8px 12px", borderRadius: 10, background: "#fff", border: "1px solid #ddd" };
+const primarySmall = { padding: "6px 10px", borderRadius: 10, background: "#111", color: "#fff", border: "1px solid #111" };

@@ -4,14 +4,14 @@ import { request, setToken } from "../api";
 export default function Login({ onLogin }) {
   const [mode, setMode] = useState("login"); // login | register
   const [fullName, setFullName] = useState("");
-  const [email, setEmail] = useState("admin@gmail.com");
+  const [email, setEmail] = useState("");
   const [password, setPassword] = useState("123456");
-  const [error, setError] = useState("");
+  const [msg, setMsg] = useState("");
   const [busy, setBusy] = useState(false);
 
   async function submit(e) {
     e.preventDefault();
-    setError("");
+    setMsg("");
     setBusy(true);
 
     try {
@@ -20,17 +20,19 @@ export default function Login({ onLogin }) {
           method: "POST",
           body: JSON.stringify({ full_name: fullName, email, password }),
         });
+        setMsg("✅ Registered as candidate. Now login.");
         setMode("login");
       } else {
-        const data = await request("/auth/login", {
+        const r = await request("/auth/login", {
           method: "POST",
           body: JSON.stringify({ email, password }),
         });
-        setToken(data.token);
-        onLogin?.(data.user);
+        setToken(r.token);
+        localStorage.setItem("user", JSON.stringify(r.user));
+        onLogin(r.user);
       }
-    } catch (err) {
-      setError(err.message || "Failed");
+    } catch (e) {
+      setMsg(`❌ ${e.message}`);
     } finally {
       setBusy(false);
     }
@@ -38,60 +40,46 @@ export default function Login({ onLogin }) {
 
   return (
     <div style={{ maxWidth: 420, margin: "40px auto", padding: 16, border: "1px solid #ddd", borderRadius: 12 }}>
-      <h2 style={{ marginTop: 0 }}>
-        {mode === "login" ? "Login" : "Register"}
-      </h2>
+      <h2 style={{ marginTop: 0 }}>Auto Resume Screening</h2>
 
-      <div style={{ display: "flex", gap: 8, marginBottom: 10 }}>
-        <button onClick={() => setMode("login")} style={{ padding: "6px 10px" }}>
-          Login
-        </button>
-        <button onClick={() => setMode("register")} style={{ padding: "6px 10px" }}>
-          Register
-        </button>
+      <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
+        <button onClick={() => setMode("login")} style={mode === "login" ? btnOn : btnOff}>Login</button>
+        <button onClick={() => setMode("register")} style={mode === "register" ? btnOn : btnOff}>Register</button>
       </div>
 
-      <form onSubmit={submit}>
+      <form onSubmit={submit} style={{ display: "grid", gap: 10 }}>
         {mode === "register" && (
-          <div style={{ marginBottom: 10 }}>
-            <label>Full Name</label>
-            <input
-              value={fullName}
-              onChange={(e) => setFullName(e.target.value)}
-              style={{ width: "100%", padding: 8 }}
-            />
-          </div>
+          <label style={{ display: "grid", gap: 6 }}>
+            <span>Full name</span>
+            <input value={fullName} onChange={(e) => setFullName(e.target.value)} style={input} />
+          </label>
         )}
 
-        <div style={{ marginBottom: 10 }}>
-          <label>Email</label>
-          <input
-            value={email}
-            onChange={(e) => setEmail(e.target.value)}
-            style={{ width: "100%", padding: 8 }}
-          />
-        </div>
+        <label style={{ display: "grid", gap: 6 }}>
+          <span>Email</span>
+          <input value={email} onChange={(e) => setEmail(e.target.value)} style={input} />
+        </label>
 
-        <div style={{ marginBottom: 10 }}>
-          <label>Password</label>
-          <input
-            type="password"
-            value={password}
-            onChange={(e) => setPassword(e.target.value)}
-            style={{ width: "100%", padding: 8 }}
-          />
-        </div>
+        <label style={{ display: "grid", gap: 6 }}>
+          <span>Password</span>
+          <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} style={input} />
+        </label>
 
-        {error && <p style={{ color: "crimson" }}>{error}</p>}
-
-        <button type="submit" disabled={busy} style={{ padding: "8px 12px" }}>
-          {busy ? "Please wait..." : mode === "login" ? "Sign in" : "Create account"}
+        <button disabled={busy} type="submit" style={primary}>
+          {busy ? "Please wait..." : mode === "login" ? "Login" : "Create account"}
         </button>
+
+        {msg && <div style={{ padding: 10, borderRadius: 10, background: "#f3f4f6" }}>{msg}</div>}
       </form>
 
-      <p style={{ fontSize: 12, color: "#555", marginTop: 12 }}>
-        Demo accounts: admin@gmail.com / hr@gmail.com / test@gmail.com (password: 123456)
-      </p>
+      <div style={{ fontSize: 12, color: "#555", marginTop: 12 }}>
+        Demo: admin/hr/recruiter accounts are created by admin using role change.
+      </div>
     </div>
   );
 }
+
+const input = { padding: "10px 12px", borderRadius: 10, border: "1px solid #ddd" };
+const primary = { padding: "10px 12px", borderRadius: 10, border: "1px solid #111", background: "#111", color: "#fff", fontWeight: 700 };
+const btnOn = { flex: 1, padding: "8px 12px", borderRadius: 10, border: "1px solid #111", background: "#111", color: "#fff" };
+const btnOff = { flex: 1, padding: "8px 12px", borderRadius: 10, border: "1px solid #ddd", background: "#fff" };
