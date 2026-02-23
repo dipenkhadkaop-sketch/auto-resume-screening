@@ -15,6 +15,11 @@ function dbGet(sql, params = []) {
     db.get(sql, params, (err, row) => (err ? reject(err) : resolve(row)));
   });
 }
+function dbAll(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows)));
+  });
+}
 function dbRun(sql, params = []) {
   return new Promise((resolve, reject) => {
     db.run(sql, params, function (err) {
@@ -24,16 +29,14 @@ function dbRun(sql, params = []) {
   });
 }
 
-// PUBLIC: Register
+// Register (default role recruiter)
 router.post("/register", async (req, res) => {
   try {
     const full_name = req.body?.full_name ? String(req.body.full_name).trim() : null;
     const email = String(req.body?.email || "").trim().toLowerCase();
     const password = String(req.body?.password || "");
 
-    if (!email || !password) {
-      return res.status(400).json({ message: "email and password are required" });
-    }
+    if (!email || !password) return res.status(400).json({ message: "email and password are required" });
 
     const existing = await dbGet("SELECT id FROM users WHERE email = ?", [email]);
     if (existing) return res.status(409).json({ message: "Email already exists" });
@@ -56,34 +59,25 @@ router.post("/register", async (req, res) => {
   }
 });
 
-// PUBLIC: Login (hardened)
+// Login
 router.post("/login", async (req, res) => {
   try {
     const email = String(req.body?.email || "").trim().toLowerCase();
     const password = String(req.body?.password || "");
 
-    if (!email || !password) {
-      return res.status(400).json({ message: "email and password are required" });
-    }
+    if (!email || !password) return res.status(400).json({ message: "email and password are required" });
 
     const user = await dbGet("SELECT * FROM users WHERE email = ?", [email]);
     if (!user) return res.status(401).json({ message: "Invalid email or password" });
 
     const hash = user.password_hash;
-    if (!hash) {
-      return res.status(500).json({
-        message: "Server error: password hash missing for this user",
-      });
-    }
+    if (!hash) return res.status(500).json({ message: "Server error: password hash missing" });
 
     const ok = await bcrypt.compare(password, hash);
     if (!ok) return res.status(401).json({ message: "Invalid email or password" });
 
     const role = user.role || "recruiter";
-
-    const token = jwt.sign({ id: user.id, email: user.email, role }, JWT_SECRET, {
-      expiresIn: "7d",
-    });
+    const token = jwt.sign({ id: user.id, email: user.email, role }, JWT_SECRET, { expiresIn: "7d" });
 
     audit({ user_id: user.id, action: "LOGIN", detail: { email }, ip: req.ip });
 
@@ -97,7 +91,17 @@ router.post("/login", async (req, res) => {
   }
 });
 
-// FR-03: Forgot password (demo returns token)
+// Admin: list users (UC-09)
+router.get("/users", auth, requireRole("admin"), async (req, res) => {
+  try {
+    const rows = await dbAll("SELECT id, full_name, email, role FROM users ORDER BY id DESC");
+    return res.json(rows);
+  } catch (e) {
+    return res.status(500).json({ message: "Server error", error: e.message });
+  }
+});
+
+// Forgot password (demo returns token)
 router.post("/forgot-password", async (req, res) => {
   try {
     const email = String(req.body?.email || "").trim().toLowerCase();
@@ -123,7 +127,7 @@ router.post("/forgot-password", async (req, res) => {
   }
 });
 
-// FR-03: Reset password (SQL fixed)
+// Reset password
 router.post("/reset-password", async (req, res) => {
   try {
     const email = String(req.body?.email || "").trim().toLowerCase();
@@ -147,9 +151,7 @@ router.post("/reset-password", async (req, res) => {
     );
 
     if (!row) return res.status(400).json({ message: "Invalid or used token" });
-    if (new Date(row.expires_at).getTime() < Date.now()) {
-      return res.status(400).json({ message: "Token expired" });
-    }
+    if (new Date(row.expires_at).getTime() < Date.now()) return res.status(400).json({ message: "Token expired" });
 
     const password_hash = await bcrypt.hash(newPassword, 10);
 
@@ -164,7 +166,7 @@ router.post("/reset-password", async (req, res) => {
   }
 });
 
-// FR-04: Admin sets role
+// Admin sets role (UC-09)
 router.post("/set-role", auth, requireRole("admin"), async (req, res) => {
   try {
     const userId = Number(req.body?.userId);

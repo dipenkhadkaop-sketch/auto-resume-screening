@@ -1,49 +1,53 @@
+// backend/routes/feedback.routes.js
 const router = require("express").Router();
 const db = require("../db/database");
 const auth = require("../middleware/auth");
+const requireRole = require("../middleware/requireRole");
 const { audit } = require("../utils/audit");
 
-function dbGet(sql, params = []) {
+function dbRun(sql, params = []) {
   return new Promise((resolve, reject) => {
-    db.get(sql, params, (err, row) => (err ? reject(err) : resolve(row)));
+    db.run(sql, params, function (err) {
+      if (err) reject(err);
+      else resolve(this);
+    });
+  });
+}
+function dbAll(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows)));
   });
 }
 
-function extractTerms(text) {
-  return Array.from(new Set((text || "").toLowerCase().split(/[^a-z0-9]+/).filter((w) => w.length > 2)));
-}
-
-// FR-10 feedback
-router.post("/", auth, async (req, res) => {
+// Create feedback (admin/hr/recruiter)
+router.post("/", auth, requireRole("admin", "hr", "recruiter"), async (req, res) => {
   try {
-    const { jobId, resumeId } = req.body;
-    if (!jobId || !resumeId) return res.status(400).json({ message: "jobId and resumeId required" });
+    const { resume_id, job_id, feedback_text } = req.body;
+    if (!resume_id || !job_id || !feedback_text) {
+      return res.status(400).json({ message: "resume_id, job_id, feedback_text required" });
+    }
 
-    const job = await dbGet("SELECT * FROM jobs WHERE id = ?", [Number(jobId)]);
-    if (!job) return res.status(404).json({ message: "Job not found" });
+    const info = await dbRun(
+      "INSERT INTO feedback (resume_id, job_id, feedback_text, created_by) VALUES (?, ?, ?, ?)",
+      [Number(resume_id), Number(job_id), String(feedback_text), req.user.id]
+    );
 
-    const resume = await dbGet("SELECT * FROM resumes WHERE id = ?", [Number(resumeId)]);
-    if (!resume) return res.status(404).json({ message: "Resume not found" });
+    audit({ user_id: req.user.id, action: "CREATE_FEEDBACK", detail: { resume_id, job_id }, ip: req.ip });
 
-    if (resume.user_id !== req.user.id) return res.status(403).json({ message: "Forbidden" });
-
-    const jobTerms = extractTerms(job.description);
-    const resumeText = (resume.text_content || "").toLowerCase();
-
-    const matched = jobTerms.filter((t) => resumeText.includes(t));
-    const missing = jobTerms.filter((t) => !resumeText.includes(t));
-
-    const feedback = {
-      strengths: matched.slice(0, 8),
-      gaps: missing.slice(0, 8),
-      tips: missing.slice(0, 5).map((t) => `Consider adding evidence of: ${t}`),
-    };
-
-    audit({ user_id: req.user.id, action: "GENERATE_FEEDBACK", detail: { jobId, resumeId }, ip: req.ip });
-
-    res.json({ jobId: Number(jobId), resumeId: Number(resumeId), feedback });
+    return res.json({ message: "Feedback created", id: info.lastID });
   } catch (e) {
-    res.status(500).json({ message: "Feedback failed", error: e.message });
+    return res.status(500).json({ message: "Server error", error: e.message });
+  }
+});
+
+// List feedback by resume id
+router.get("/resume/:resumeId", auth, async (req, res) => {
+  try {
+    const resumeId = Number(req.params.resumeId);
+    const rows = await dbAll("SELECT * FROM feedback WHERE resume_id = ? ORDER BY id DESC", [resumeId]);
+    return res.json(rows);
+  } catch (e) {
+    return res.status(500).json({ message: "Server error", error: e.message });
   }
 });
 

@@ -14,12 +14,10 @@ export async function request(path, options = {}) {
   const token = getToken();
   const headers = { ...(options.headers || {}) };
 
-  // JSON body? add header
   if (options.body && !(options.body instanceof FormData)) {
     headers["Content-Type"] = "application/json";
   }
 
-  // Attach JWT if exists
   if (token) headers["Authorization"] = `Bearer ${token}`;
 
   const res = await fetch(`${API}${path}`, { ...options, headers });
@@ -33,8 +31,7 @@ export async function request(path, options = {}) {
   }
 
   if (!res.ok) {
-    const msg = data?.message || `Request failed (${res.status})`;
-    throw new Error(msg);
+    throw new Error(data?.message || `Request failed (${res.status})`);
   }
 
   return data;
