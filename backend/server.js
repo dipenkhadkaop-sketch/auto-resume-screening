@@ -17,7 +17,7 @@ app.use("/resume", require("./routes/resume.routes"));
 app.use("/jobs", require("./routes/job.routes"));
 app.use("/analysis", require("./routes/analysis.routes"));
 app.use("/feedback", require("./routes/feedback.routes"));
-
+app.use("/admin", require("./routes/admin.routes"));
 // Health check
 app.get("/health", (req, res) => res.json({ ok: true }));
 

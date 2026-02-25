@@ -18,7 +18,7 @@ export default function App() {
   const [jobs, setJobs] = useState([]);
   const [selectedJobId, setSelectedJobId] = useState("");
 
-  // Create job
+  // Create job (staff)
   const [jobTitle, setJobTitle] = useState("Frontend Developer");
   const [jobDescription, setJobDescription] = useState("react, node.js, express, sqlite, git");
 
@@ -67,7 +67,6 @@ export default function App() {
     const list = await request("/jobs");
     setJobs(list);
 
-    // ✅ Auto select first job if none selected
     if (!selectedJobId && list?.length) {
       setSelectedJobId(String(list[0].id));
     }
@@ -76,22 +75,17 @@ export default function App() {
   async function refreshUsers() {
     const list = await request("/auth/users");
     setUsers(list);
+
     const next = {};
     list.forEach((u) => (next[u.id] = u.role));
     setRoleEdits(next);
   }
 
-  // Load jobs after login (for staff)
   useEffect(() => {
     if (!user) return;
 
-    if (isStaff) {
-      refreshJobs().catch(() => {});
-    }
-
-    if (isAdmin) {
-      refreshUsers().catch(() => {});
-    }
+    if (isStaff) refreshJobs().catch(() => {});
+    if (isAdmin) refreshUsers().catch(() => {});
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [user]);
 
@@ -138,9 +132,11 @@ export default function App() {
         body: JSON.stringify({ title: jobTitle, description: jobDescription }),
       });
 
-      setToast(`Job created ✅ (id ${r.id})`);
+      const newId = r.job_id ?? r.id; // supports either
+      setToast(`Job created ✅ (id ${newId ?? "?"})`);
+
       await refreshJobs();
-      setSelectedJobId(String(r.id));
+      if (newId) setSelectedJobId(String(newId));
     } catch (e) {
       setError(e.message);
     } finally {
@@ -151,9 +147,6 @@ export default function App() {
   async function runScore() {
     setError("");
     if (!selectedJobId) return setError("Select a job first.");
-
-    // If you want to score a specific resume, you need a resume id.
-    // For demo: score the last uploaded resume if present
     if (!uploadedResume?.resume_id) return setError("No uploaded resume found (upload as candidate first).");
 
     setBusy(true);
@@ -263,12 +256,6 @@ export default function App() {
             <>
               <p style={{ marginTop: 0 }}>✅ Candidate account. Upload your resume to be screened.</p>
               <p>Latest uploaded resume: <b>{uploadedResume?.resume_id || "None"}</b></p>
-              {uploadedResume?.preview && (
-                <div style={{ marginTop: 10, padding: 10, borderRadius: 12, background: "#fafafa", border: "1px solid #eee" }}>
-                  <b>Extract preview:</b>
-                  <pre style={{ whiteSpace: "pre-wrap", margin: 0 }}>{uploadedResume.preview}</pre>
-                </div>
-              )}
             </>
           ) : (
             <>
@@ -322,9 +309,6 @@ export default function App() {
                   </option>
                 ))}
               </select>
-              <div style={{ fontSize: 12, color: "#666" }}>
-                Selected jobId: <b>{selectedJobId || "None"}</b>
-              </div>
             </div>
           </div>
         </Card>
@@ -352,9 +336,6 @@ export default function App() {
               <div style={{ marginTop: 6 }}>
                 Resume <b>{analysis.resume_id}</b> vs Job <b>{analysis.job_id}</b> — <b>{analysis.score_percentage}%</b>
               </div>
-              <div style={{ color: "#555", marginTop: 6 }}>
-                Matched: {analysis.matched_skills?.length ? analysis.matched_skills.join(", ") : "-"}
-              </div>
             </div>
           )}
 
@@ -365,23 +346,16 @@ export default function App() {
                   <div style={{ fontSize: 24, fontWeight: 900 }}>
                     #{idx + 1} Resume {r.resume_id} — {r.score_percentage}%
                   </div>
-                  <div style={{ color: "#666", fontSize: 18 }}>
-                    Matched: {r.matched_skills?.length ? r.matched_skills.join(", ") : "-"}
-                  </div>
                 </div>
               ))}
             </div>
-          ) : ranking ? (
-            <div style={{ marginTop: 14, color: "#666" }}>No ranked results.</div>
           ) : null}
         </Card>
       )}
 
       {tab === "admin" && isAdmin && (
         <Card title="Admin: Manage Users & Roles">
-          <button onClick={() => refreshUsers()} disabled={busy} style={secondaryBtn}>
-            Refresh Users
-          </button>
+          <button onClick={() => refreshUsers()} disabled={busy} style={secondaryBtn}>Refresh Users</button>
 
           <div style={{ marginTop: 12, border: "1px solid #eee", borderRadius: 12, padding: 12 }}>
             {users.map((u) => (
@@ -402,9 +376,7 @@ export default function App() {
                     <option value="candidate">candidate</option>
                   </select>
 
-                  <button onClick={() => saveRole(u.id)} disabled={busy} style={primaryBtn}>
-                    Save
-                  </button>
+                  <button onClick={() => saveRole(u.id)} disabled={busy} style={primaryBtn}>Save</button>
                 </div>
               </div>
             ))}

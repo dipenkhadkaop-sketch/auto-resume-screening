@@ -1,55 +1,131 @@
-// backend/routes/job.routes.js
 const router = require("express").Router();
 const db = require("../db/database");
 const auth = require("../middleware/auth");
 const requireRole = require("../middleware/requireRole");
-const { audit } = require("../utils/audit");
 
-// Create Job (admin/hr/recruiter)
-router.post("/", auth, requireRole("admin", "hr", "recruiter"), (req, res) => {
-  const { title, description } = req.body;
-  if (!title || !description) return res.status(400).json({ message: "title and description required" });
-
-  db.run(
-    "INSERT INTO jobs (title, description, created_at) VALUES (?, ?, ?)",
-    [title, description, new Date().toISOString()],
-    function (err) {
-      if (err) return res.status(500).json({ message: "DB error", error: err.message });
-
-      audit({ user_id: req.user.id, action: "CREATE_JOB", detail: { jobId: this.lastID, title }, ip: req.ip });
-
-      res.json({ id: this.lastID });
-    }
-  );
-});
-
-// Edit Job (admin/hr/recruiter)
-router.put("/:id", auth, requireRole("admin", "hr", "recruiter"), (req, res) => {
-  const id = Number(req.params.id);
-  const { title, description } = req.body;
-
-  if (!id) return res.status(400).json({ message: "invalid id" });
-  if (!title || !description) return res.status(400).json({ message: "title and description required" });
-
-  db.run(
-    "UPDATE jobs SET title = ?, description = ? WHERE id = ?",
-    [title, description, id],
-    function (err) {
-      if (err) return res.status(500).json({ message: "DB error", error: err.message });
-
-      audit({ user_id: req.user.id, action: "EDIT_JOB", detail: { jobId: id, title }, ip: req.ip });
-
-      res.json({ message: "Job updated", id });
-    }
-  );
-});
-
-// List Jobs (public)
-router.get("/", (req, res) => {
-  db.all("SELECT * FROM jobs ORDER BY id DESC", [], (err, rows) => {
-    if (err) return res.status(500).json({ message: "DB error", error: err.message });
-    res.json(rows);
+function dbGet(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.get(sql, params, (err, row) => (err ? reject(err) : resolve(row)));
   });
+}
+function dbAll(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.all(sql, params, (err, rows) => (err ? reject(err) : resolve(rows)));
+  });
+}
+function dbRun(sql, params = []) {
+  return new Promise((resolve, reject) => {
+    db.run(sql, params, function (err) {
+      if (err) reject(err);
+      else resolve(this);
+    });
+  });
+}
+
+/**
+ * PUBLIC: list job ads
+ */
+router.get("/", async (req, res) => {
+  try {
+    const jobs = await dbAll(
+      `SELECT id, title, company, location, description, requirements, created_at
+       FROM jobs
+       ORDER BY id DESC`
+    );
+    res.json(jobs);
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+});
+
+/**
+ * PUBLIC: view job
+ */
+router.get("/:id", async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const job = await dbGet("SELECT * FROM jobs WHERE id = ?", [id]);
+    if (!job) return res.status(404).json({ message: "Job not found" });
+    res.json(job);
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+});
+
+/**
+ * ADMIN/RECRUITER: create job
+ */
+router.post("/", auth, requireRole("admin", "recruiter"), async (req, res) => {
+  try {
+    const { title, company, location, description, requirements } = req.body;
+
+    if (!title || !description) {
+      return res.status(400).json({ message: "title and description are required" });
+    }
+
+    const r = await dbRun(
+      `INSERT INTO jobs (title, company, location, description, requirements, created_by)
+       VALUES (?, ?, ?, ?, ?, ?)`,
+      [
+        title.trim(),
+        (company || "").trim(),
+        (location || "").trim(),
+        description.trim(),
+        (requirements || "").trim(),
+        req.user.id
+      ]
+    );
+
+    res.json({ message: "Job created", job_id: r.lastID });
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+});
+
+/**
+ * ADMIN/RECRUITER: update job
+ */
+router.put("/:id", auth, requireRole("admin", "recruiter"), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    const { title, company, location, description, requirements } = req.body;
+
+    if (!title || !description) {
+      return res.status(400).json({ message: "title and description are required" });
+    }
+
+    const exists = await dbGet("SELECT id FROM jobs WHERE id = ?", [id]);
+    if (!exists) return res.status(404).json({ message: "Job not found" });
+
+    await dbRun(
+      `UPDATE jobs SET title=?, company=?, location=?, description=?, requirements=? WHERE id=?`,
+      [
+        title.trim(),
+        (company || "").trim(),
+        (location || "").trim(),
+        description.trim(),
+        (requirements || "").trim(),
+        id
+      ]
+    );
+
+    res.json({ message: "Job updated" });
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
+});
+
+/**
+ * ADMIN/RECRUITER: delete job
+ */
+router.delete("/:id", auth, requireRole("admin", "recruiter"), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    await dbRun("DELETE FROM jobs WHERE id = ?", [id]);
+    res.json({ message: "Job deleted" });
+  } catch (e) {
+    res.status(500).json({ message: e.message });
+  }
 });
 
 module.exports = router;
