@@ -2,11 +2,11 @@
 import React, { useState } from "react";
 import { request, setToken } from "../api";
 
-export default function AuthPage({ health, error, onLogin }) {
+export default function AuthPage({ health, error, onLogin, loginType }) {
   const [mode, setMode] = useState("login"); // login | register
   const [full_name, setFullName] = useState("");
-  const [email, setEmail] = useState("admin@gmail.com");
-  const [password, setPassword] = useState("123456");
+  const [email, setEmail] = useState("");
+  const [password, setPassword] = useState("");
   const [msg, setMsg] = useState("");
 
   async function submit(e) {
@@ -19,6 +19,7 @@ export default function AuthPage({ health, error, onLogin }) {
           method: "POST",
           body: JSON.stringify({ full_name, email, password }),
         });
+
         setMsg(`✅ Registered: ${r.user.email}. Now login.`);
         setMode("login");
         return;
@@ -30,6 +31,18 @@ export default function AuthPage({ health, error, onLogin }) {
       });
 
       setToken(r.token);
+
+      // 🔒 Role restriction
+      if (loginType === "candidate" && r.user.role !== "candidate") {
+        setMsg("❌ This login is for candidates only.");
+        return;
+      }
+
+      if (loginType === "staff" && r.user.role === "candidate") {
+        setMsg("❌ This login is for staff only.");
+        return;
+      }
+
       onLogin(r.user);
     } catch (err) {
       setMsg(`❌ ${err.message}`);
@@ -39,7 +52,11 @@ export default function AuthPage({ health, error, onLogin }) {
   return (
     <div style={{ minHeight: "100vh", display: "grid", placeItems: "center", padding: 16 }}>
       <div style={{ width: "100%", maxWidth: 420, border: "1px solid #e5e7eb", borderRadius: 12, padding: 18 }}>
-        <h2 style={{ margin: 0 }}>Auto Resume Screening</h2>
+        
+        <h2 style={{ margin: 0 }}>
+          {loginType === "staff" ? "Staff Login" : "Candidate Login"}
+        </h2>
+
         <p style={{ marginTop: 6, color: "#6b7280" }}>
           {mode === "login" ? "Login to continue" : "Create your account"}
         </p>
@@ -52,30 +69,19 @@ export default function AuthPage({ health, error, onLogin }) {
         <div style={{ display: "flex", gap: 8, marginBottom: 12 }}>
           <button
             onClick={() => setMode("login")}
-            style={{
-              flex: 1,
-              padding: "10px 12px",
-              borderRadius: 10,
-              border: "1px solid #e5e7eb",
-              background: mode === "login" ? "#111827" : "white",
-              color: mode === "login" ? "white" : "#111827",
-            }}
+            style={tabBtn(mode === "login")}
           >
             Login
           </button>
-          <button
-            onClick={() => setMode("register")}
-            style={{
-              flex: 1,
-              padding: "10px 12px",
-              borderRadius: 10,
-              border: "1px solid #e5e7eb",
-              background: mode === "register" ? "#111827" : "white",
-              color: mode === "register" ? "white" : "#111827",
-            }}
-          >
-            Register
-          </button>
+
+          {loginType === "candidate" && (
+            <button
+              onClick={() => setMode("register")}
+              style={tabBtn(mode === "register")}
+            >
+              Register
+            </button>
+          )}
         </div>
 
         <form onSubmit={submit} style={{ display: "grid", gap: 10 }}>
@@ -85,7 +91,6 @@ export default function AuthPage({ health, error, onLogin }) {
               <input
                 value={full_name}
                 onChange={(e) => setFullName(e.target.value)}
-                placeholder="e.g. Dipen Khadka"
                 style={inputStyle}
               />
             </label>
@@ -93,7 +98,11 @@ export default function AuthPage({ health, error, onLogin }) {
 
           <label style={{ display: "grid", gap: 6 }}>
             <span>Email</span>
-            <input value={email} onChange={(e) => setEmail(e.target.value)} style={inputStyle} />
+            <input
+              value={email}
+              onChange={(e) => setEmail(e.target.value)}
+              style={inputStyle}
+            />
           </label>
 
           <label style={{ display: "grid", gap: 6 }}>
@@ -106,29 +115,30 @@ export default function AuthPage({ health, error, onLogin }) {
             />
           </label>
 
-          <button
-            type="submit"
-            style={{
-              padding: "10px 12px",
-              borderRadius: 10,
-              border: "1px solid #111827",
-              background: "#111827",
-              color: "white",
-              fontWeight: 600,
-            }}
-          >
+          <button type="submit" style={primaryBtn}>
             {mode === "login" ? "Login" : "Create account"}
           </button>
 
-          {msg && <div style={{ padding: 10, borderRadius: 10, background: "#f3f4f6" }}>{msg}</div>}
+          {msg && (
+            <div style={{ padding: 10, borderRadius: 10, background: "#f3f4f6" }}>
+              {msg}
+            </div>
+          )}
         </form>
-
-        <p style={{ marginTop: 12, color: "#6b7280", fontSize: 12 }}>
-          Tip: Login as <b>admin@gmail.com</b>, <b>hr@gmail.com</b>, or a normal user.
-        </p>
       </div>
     </div>
   );
+}
+
+function tabBtn(active) {
+  return {
+    flex: 1,
+    padding: "10px 12px",
+    borderRadius: 10,
+    border: "1px solid #e5e7eb",
+    background: active ? "#111827" : "white",
+    color: active ? "white" : "#111827",
+  };
 }
 
 const inputStyle = {
@@ -136,4 +146,13 @@ const inputStyle = {
   borderRadius: 10,
   border: "1px solid #e5e7eb",
   outline: "none",
+};
+
+const primaryBtn = {
+  padding: "10px 12px",
+  borderRadius: 10,
+  border: "1px solid #111827",
+  background: "#111827",
+  color: "white",
+  fontWeight: 600,
 };

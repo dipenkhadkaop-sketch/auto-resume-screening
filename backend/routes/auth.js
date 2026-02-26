@@ -175,5 +175,41 @@ router.post("/set-role", auth, requireRole("admin"), async (req, res) => {
     return res.status(500).json({ message: "Server error", error: e.message });
   }
 });
+// ADMIN: Delete user
+router.delete("/users/:id", auth, requireRole("admin"), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ message: "Invalid user id" });
 
+    // Prevent admin deleting themselves (optional but smart)
+    if (req.user.id === id) {
+      return res.status(400).json({ message: "You cannot delete your own admin account" });
+    }
+
+    // Check user exists
+    const u = await dbGet("SELECT id, email, role FROM users WHERE id = ?", [id]);
+    if (!u) return res.status(404).json({ message: "User not found" });
+
+    // Clean up dependent rows (because SQLite FK might not cascade)
+    await dbRun("DELETE FROM applications WHERE user_id = ?", [id]);
+    await dbRun("DELETE FROM password_reset_tokens WHERE user_id = ?", [id]);
+    await dbRun("DELETE FROM audit_log WHERE user_id = ?", [id]);
+
+    // If resumes belong to user, delete resumes too (and feedback linked to them)
+    const resumes = await dbAll("SELECT id FROM resumes WHERE user_id = ?", [id]);
+    for (const r of resumes) {
+      await dbRun("DELETE FROM feedback WHERE resume_id = ?", [r.id]);
+    }
+    await dbRun("DELETE FROM resumes WHERE user_id = ?", [id]);
+
+    // Finally delete user
+    await dbRun("DELETE FROM users WHERE id = ?", [id]);
+
+    audit({ user_id: req.user.id, action: "DELETE_USER", detail: { deletedUserId: id, email: u.email }, ip: req.ip });
+
+    return res.json({ message: "User deleted" });
+  } catch (e) {
+    return res.status(500).json({ message: "Server error", error: e.message });
+  }
+});
 module.exports = router;

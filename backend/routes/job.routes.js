@@ -22,14 +22,18 @@ function dbRun(sql, params = []) {
   });
 }
 
+// Helper: check open jobs (closing_date is NULL or >= today)
+const OPEN_JOB_WHERE = `(closing_date IS NULL OR date(closing_date) >= date('now'))`;
+
 /**
- * PUBLIC: list job ads
+ * PUBLIC: list OPEN job ads only
  */
 router.get("/", async (req, res) => {
   try {
     const jobs = await dbAll(
-      `SELECT id, title, company, location, description, requirements, created_at
+      `SELECT id, title, company, location, description, requirements, closing_date, created_at
        FROM jobs
+       WHERE ${OPEN_JOB_WHERE}
        ORDER BY id DESC`
     );
     res.json(jobs);
@@ -39,7 +43,7 @@ router.get("/", async (req, res) => {
 });
 
 /**
- * PUBLIC: view job
+ * PUBLIC: view job (includes closed too)
  */
 router.get("/:id", async (req, res) => {
   try {
@@ -54,25 +58,35 @@ router.get("/:id", async (req, res) => {
 
 /**
  * ADMIN/RECRUITER: create job
+ * Body: { title, company, location, description, requirements, closing_date }
  */
-router.post("/", auth, requireRole("admin", "recruiter"), async (req, res) => {
+router.post("/", auth, requireRole("admin", "recruiter", "hr"), async (req, res) => {
   try {
-    const { title, company, location, description, requirements } = req.body;
+    const { title, company, location, description, requirements, closing_date } = req.body;
 
     if (!title || !description) {
       return res.status(400).json({ message: "title and description are required" });
     }
 
+    // Optional validation: closing date must be today or future if provided
+    if (closing_date) {
+      const cd = new Date(closing_date);
+      if (Number.isNaN(cd.getTime())) {
+        return res.status(400).json({ message: "closing_date must be a valid date (YYYY-MM-DD)" });
+      }
+    }
+
     const r = await dbRun(
-      `INSERT INTO jobs (title, company, location, description, requirements, created_by)
-       VALUES (?, ?, ?, ?, ?, ?)`,
+      `INSERT INTO jobs (title, company, location, description, requirements, closing_date, created_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?)`,
       [
         title.trim(),
         (company || "").trim(),
         (location || "").trim(),
         description.trim(),
         (requirements || "").trim(),
-        req.user.id
+        closing_date || null,
+        req.user.id,
       ]
     );
 
@@ -85,10 +99,10 @@ router.post("/", auth, requireRole("admin", "recruiter"), async (req, res) => {
 /**
  * ADMIN/RECRUITER: update job
  */
-router.put("/:id", auth, requireRole("admin", "recruiter"), async (req, res) => {
+router.put("/:id", auth, requireRole("admin", "recruiter", "hr"), async (req, res) => {
   try {
     const id = Number(req.params.id);
-    const { title, company, location, description, requirements } = req.body;
+    const { title, company, location, description, requirements, closing_date } = req.body;
 
     if (!title || !description) {
       return res.status(400).json({ message: "title and description are required" });
@@ -98,14 +112,17 @@ router.put("/:id", auth, requireRole("admin", "recruiter"), async (req, res) => 
     if (!exists) return res.status(404).json({ message: "Job not found" });
 
     await dbRun(
-      `UPDATE jobs SET title=?, company=?, location=?, description=?, requirements=? WHERE id=?`,
+      `UPDATE jobs
+       SET title=?, company=?, location=?, description=?, requirements=?, closing_date=?
+       WHERE id=?`,
       [
         title.trim(),
         (company || "").trim(),
         (location || "").trim(),
         description.trim(),
         (requirements || "").trim(),
-        id
+        closing_date || null,
+        id,
       ]
     );
 
@@ -118,7 +135,7 @@ router.put("/:id", auth, requireRole("admin", "recruiter"), async (req, res) => 
 /**
  * ADMIN/RECRUITER: delete job
  */
-router.delete("/:id", auth, requireRole("admin", "recruiter"), async (req, res) => {
+router.delete("/:id", auth, requireRole("admin", "recruiter", "hr"), async (req, res) => {
   try {
     const id = Number(req.params.id);
     await dbRun("DELETE FROM jobs WHERE id = ?", [id]);
